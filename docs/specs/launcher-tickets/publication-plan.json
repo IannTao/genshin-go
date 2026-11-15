@@ -1,0 +1,297 @@
+[
+  {
+    "id": 1,
+    "tag": "T01",
+    "batch": 1,
+    "title": "[T01] 选择已有游戏并普通启动",
+    "blockers": [],
+    "bodyFile": "T01.md"
+  },
+  {
+    "id": 2,
+    "tag": "T02",
+    "batch": 1,
+    "title": "[T02] 扫码添加并保存米哈游账号",
+    "blockers": [
+      1
+    ],
+    "bodyFile": "T02.md"
+  },
+  {
+    "id": 3,
+    "tag": "T03",
+    "batch": 1,
+    "title": "[T03] 切换已保存账号并启动游戏",
+    "blockers": [
+      1,
+      2
+    ],
+    "bodyFile": "T03.md"
+  },
+  {
+    "id": 4,
+    "tag": "T04",
+    "batch": 1,
+    "title": "[T04] 独立管理游戏 UID 与验证账号归属",
+    "blockers": [
+      1
+    ],
+    "bodyFile": "T04.md"
+  },
+  {
+    "id": 5,
+    "tag": "T05",
+    "batch": 1,
+    "title": "[T05] 移除账号与独立删除历史记录",
+    "blockers": [
+      2,
+      4
+    ],
+    "bodyFile": "T05.md"
+  },
+  {
+    "id": 6,
+    "tag": "T06",
+    "batch": 2,
+    "title": "[T06] 下载并安装游戏，支持断点恢复",
+    "blockers": [
+      1
+    ],
+    "bodyFile": "T06.md"
+  },
+  {
+    "id": 7,
+    "tag": "T07",
+    "batch": 2,
+    "title": "[T07] 下载并应用增量更新",
+    "blockers": [
+      6
+    ],
+    "bodyFile": "T07.md"
+  },
+  {
+    "id": 8,
+    "tag": "T08",
+    "batch": 2,
+    "title": "[T08] 预下载并在更新可用时安装",
+    "blockers": [
+      7
+    ],
+    "bodyFile": "T08.md"
+  },
+  {
+    "id": 9,
+    "tag": "T09",
+    "batch": 2,
+    "title": "[T09] 校验并修复游戏文件",
+    "blockers": [
+      6
+    ],
+    "bodyFile": "T09.md"
+  },
+  {
+    "id": 10,
+    "tag": "T10",
+    "batch": 3,
+    "title": "[T10] 为指定账号自动完成游戏签到",
+    "blockers": [
+      2
+    ],
+    "bodyFile": "T10.md"
+  },
+  {
+    "id": 11,
+    "tag": "T11",
+    "batch": 3,
+    "title": "[T11] 接入社区签到并展示独立结果",
+    "blockers": [
+      10
+    ],
+    "bodyFile": "T11.md"
+  },
+  {
+    "id": 12,
+    "tag": "T12",
+    "batch": 3,
+    "title": "[T12] 接入云游戏签到并展示独立结果",
+    "blockers": [
+      10
+    ],
+    "bodyFile": "T12.md"
+  },
+  {
+    "id": 13,
+    "tag": "T13",
+    "batch": 3,
+    "title": "[T13] 展示三类签到奖励日历",
+    "blockers": [
+      11,
+      12
+    ],
+    "bodyFile": "T13.md"
+  },
+  {
+    "id": 14,
+    "tag": "T14",
+    "batch": 4,
+    "title": "[T14] 导入导出 UIGF 祈愿记录",
+    "blockers": [
+      4
+    ],
+    "bodyFile": "T14.md"
+  },
+  {
+    "id": 15,
+    "tag": "T15",
+    "batch": 4,
+    "title": "[T15] 展示保底与稀有度统计",
+    "blockers": [
+      14
+    ],
+    "bodyFile": "T15.md"
+  },
+  {
+    "id": 16,
+    "tag": "T16",
+    "batch": 4,
+    "title": "[T16] 查看并手动维护成就进度",
+    "blockers": [
+      4
+    ],
+    "bodyFile": "T16.md"
+  },
+  {
+    "id": 17,
+    "tag": "T17",
+    "batch": 4,
+    "title": "[T17] 导入导出 UIAF 成就记录",
+    "blockers": [
+      16
+    ],
+    "bodyFile": "T17.md"
+  },
+  {
+    "id": 18,
+    "tag": "T18",
+    "batch": 4,
+    "title": "[T18] 备份恢复抽卡与成就记录",
+    "blockers": [
+      14,
+      17
+    ],
+    "bodyFile": "T18.md"
+  },
+  {
+    "id": 19,
+    "tag": "T19",
+    "batch": 5,
+    "title": "[T19] 导入并浏览背包快照",
+    "blockers": [
+      4
+    ],
+    "bodyFile": "T19.md"
+  },
+  {
+    "id": 20,
+    "tag": "T20",
+    "batch": 5,
+    "title": "[T20] 创建角色养成计划并计算材料",
+    "blockers": [
+      4
+    ],
+    "bodyFile": "T20.md"
+  },
+  {
+    "id": 21,
+    "tag": "T21",
+    "batch": 5,
+    "title": "[T21] 创建武器养成计划并计算材料",
+    "blockers": [
+      20
+    ],
+    "bodyFile": "T21.md"
+  },
+  {
+    "id": 22,
+    "tag": "T22",
+    "batch": 5,
+    "title": "[T22] 使用背包库存计算养成缺口",
+    "blockers": [
+      19,
+      20,
+      21
+    ],
+    "bodyFile": "T22.md"
+  },
+  {
+    "id": 23,
+    "tag": "T23",
+    "batch": 5,
+    "title": "[T23] 迁移养成计划与背包快照",
+    "blockers": [
+      18,
+      19,
+      20,
+      21
+    ],
+    "bodyFile": "T23.md"
+  },
+  {
+    "id": 24,
+    "tag": "T24",
+    "batch": 6,
+    "title": "[T24] 浏览精选插件目录",
+    "blockers": [
+      1
+    ],
+    "bodyFile": "T24.md"
+  },
+  {
+    "id": 25,
+    "tag": "T25",
+    "batch": 6,
+    "title": "[T25] 安装、更新与卸载已确认插件",
+    "blockers": [
+      24
+    ],
+    "bodyFile": "T25.md"
+  },
+  {
+    "id": 26,
+    "tag": "T26",
+    "batch": 6,
+    "title": "[T26] 用固定版本 UnlockerIsland 可选注入启动",
+    "blockers": [
+      3,
+      25
+    ],
+    "bodyFile": "T26.md"
+  },
+  {
+    "id": 27,
+    "tag": "T27",
+    "batch": 6,
+    "title": "[T27] 更新注入模块并保留普通启动",
+    "blockers": [
+      26
+    ],
+    "bodyFile": "T27.md"
+  },
+  {
+    "id": 28,
+    "tag": "T28",
+    "batch": 6,
+    "title": "[T28] 交付可安装的 Windows 首期构建产物",
+    "blockers": [
+      5,
+      8,
+      9,
+      13,
+      15,
+      22,
+      23,
+      27
+    ],
+    "bodyFile": "T28.md"
+  }
+]
