@@ -3,10 +3,9 @@
 // (`nsh.json` "root").
 import { expect, open, test } from "nsh/test";
 
-test("counts taps", async () => {
+test("shows installation selection and ordinary launch", async () => {
   const app = await open(".");
-  expect(app.texts()).toContain("Count: 0");
-  await app.press("Tap");
-  await app.press("Tap");
-  expect(app.texts()).toContain("Count: 2");
+  expect(app.texts()).toContain("原神启动器");
+  expect(app.texts()).toContain("选择游戏目录");
+  expect(app.texts()).toContain("普通启动");
 });

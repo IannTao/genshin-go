@@ -1,0 +1,11 @@
+await app.setViewport(480, 640);
+console.log(JSON.stringify(app.texts()));
+const installation = app.texts().find((text) => text.startsWith("选择："));
+if (!installation) throw new Error("未自动发现有效国服安装");
+await app.press(installation);
+console.log(JSON.stringify(app.texts()));
+await app.screenshot("target/t01-windows.png");
+await app.press("普通启动");
+await app.waitFor("已请求启动游戏", { timeout: 20000 });
+console.log(JSON.stringify(app.texts()));
+if (!app.texts().includes("已请求启动游戏")) throw new Error("Windows 启动请求未成功");

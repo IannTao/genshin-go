@@ -1,5 +1,41 @@
 # Genshin-Go
 
+## Windows launcher: existing official mainland-China installation
+
+The Rust root discovers existing installations from the current-user and machine
+uninstall registry entries (both registry views), legacy launcher `config.ini`
+paths, and common Program Files locations. Discovery is bounded; installations
+elsewhere can be selected with **选择游戏目录** or entered in the path field.
+Select a discovered installation to save it as the default. The selected game
+directory must contain `YuanShen.exe`, `YuanShen_Data`, and an official-channel
+`config.ini`; choosing a legacy launcher directory also resolves its game path.
+
+The default is stored atomically in `%LOCALAPPDATA%/Genshin-Go/settings.json`.
+The app validates it again on reopening and before **普通启动**. Ordinary launch
+uses the Windows shell with the game directory as the working directory; Windows
+may ask for elevation according to the game's manifest. **已请求启动游戏** means
+Windows accepted the request; it does not claim the game reached its login screen.
+Game downloads and account switching belong to later tickets.
+
+The isolated interaction suite runs the same Rust launcher with a controlled
+application environment. It never launches the real game or writes the user's
+settings:
+
+```sh
+nsh check
+nsh test
+cd tests/.fixture
+nsh check
+nsh test
+```
+
+The fixture has its own NSH entry and must run from its directory. Its hidden
+directory keeps the root runner from discovering tests for a different Rust root.
+Both `.nsh/`
+and `target/` remain generated directories. Windows launch validation steps are
+recorded separately in `docs/validation/t01-windows-launch.js`; running them
+requests a real game launch and changes the launcher's default directory.
+
 An app written in Rust: its UI is `src/lib.rs`, and `nsh.json` names the root component (`"root": "App"`).
 
 ```sh

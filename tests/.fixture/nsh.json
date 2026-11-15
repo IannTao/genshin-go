@@ -1,0 +1,5 @@
+{
+  "name": "Launcher fixture",
+  "rust": ".",
+  "root": "Fixture"
+}
