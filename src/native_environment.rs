@@ -15,6 +15,26 @@ impl NativeEnvironment {
             settings: settings_path(),
         }
     }
+
+    #[cfg(target_os = "windows")]
+    fn accounts_path(&self) -> Result<PathBuf, String> {
+        Ok(self
+            .settings
+            .as_ref()
+            .map_err(Clone::clone)?
+            .with_file_name("accounts.dpapi"))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn account_work<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> crate::accounts::AccountOperation<T> {
+    Box::pin(async move {
+        tokio::task::spawn_blocking(work)
+            .await
+            .map_err(|_| "账号操作未能完成，请重试".to_owned())?
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -27,6 +47,37 @@ fn settings_path() -> Result<PathBuf, String> {
     std::env::var_os("LOCALAPPDATA")
         .map(|root| PathBuf::from(root).join("Genshin-Go").join("settings.json"))
         .ok_or_else(|| "无法确定本机配置目录".into())
+}
+
+pub(crate) fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = destination.parent().ok_or("配置路径无效")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let temporary = parent.join(format!("settings-{}-{unique}.tmp", std::process::id()));
+    let result = (|| {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&bytes)
+            .and_then(|_| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        drop(file);
+        #[cfg(target_os = "windows")]
+        windows_environment::replace_settings(&temporary, &destination)?;
+        #[cfg(not(target_os = "windows"))]
+        fs::rename(&temporary, &destination).map_err(|error| error.to_string())?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn ini_value<'a>(contents: &'a str, section: &str, key: &str) -> Option<&'a str> {
@@ -99,6 +150,75 @@ fn validate_installation(path: &Path) -> Result<PathBuf, String> {
 }
 
 impl LauncherEnvironment for NativeEnvironment {
+    fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool> {
+        #[cfg(target_os = "windows")]
+        {
+            let path = self.accounts_path();
+            account_work(move || {
+                let authorization = crate::account_store::load(&path?)?
+                    .into_iter()
+                    .find(|a| a.account_id == account_id)
+                    .ok_or("账号授权不存在，请重新扫码")?;
+                crate::account_service::check(authorization)
+            })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = account_id;
+            Box::pin(async { Err("本期仅支持 Windows 授权验证".into()) })
+        }
+    }
+    fn poll_qr(
+        &self,
+        qr: crate::accounts::QrSession,
+    ) -> crate::accounts::AccountOperation<crate::accounts::QrStatus> {
+        #[cfg(target_os = "windows")]
+        {
+            account_work(move || crate::account_service::poll(qr))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = qr;
+            Box::pin(async { Err("本期仅支持 Windows 扫码授权".into()) })
+        }
+    }
+    fn load_accounts(&self) -> Result<Vec<String>, String> {
+        #[cfg(target_os = "windows")]
+        {
+            Ok(crate::account_store::load(&self.accounts_path()?)?
+                .into_iter()
+                .map(|a| a.account_id)
+                .collect())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(Vec::new())
+        }
+    }
+    fn save_authorization(
+        &self,
+        authorization: crate::accounts::Authorization,
+    ) -> Result<Vec<String>, String> {
+        #[cfg(target_os = "windows")]
+        {
+            crate::account_store::save(&self.accounts_path()?, authorization)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = authorization;
+            Err("本期仅支持 Windows 凭据保护".into())
+        }
+    }
+    fn create_qr(&self) -> crate::accounts::AccountOperation<crate::accounts::QrSession> {
+        #[cfg(target_os = "windows")]
+        {
+            account_work(crate::account_service::create)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Box::pin(async { Err("本期仅支持 Windows 扫码授权".into()) })
+        }
+    }
     fn discover(&self) -> Result<Vec<PathBuf>, String> {
         #[cfg(target_os = "windows")]
         {
@@ -147,39 +267,12 @@ impl LauncherEnvironment for NativeEnvironment {
 
     fn save_default(&self, directory: &Path) -> Result<(), String> {
         let destination = self.settings.as_ref().map_err(Clone::clone)?;
-        let parent = destination.parent().ok_or("配置路径无效")?;
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec_pretty(&Settings {
             version: 1,
             default_directory: directory.into(),
         })
         .map_err(|error| error.to_string())?;
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| error.to_string())?
-            .as_nanos();
-        let temporary = parent.join(format!("settings-{}-{unique}.tmp", std::process::id()));
-        let result = (|| {
-            use std::io::Write;
-            let mut file = fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&temporary)
-                .map_err(|error| error.to_string())?;
-            file.write_all(&bytes)
-                .and_then(|_| file.sync_all())
-                .map_err(|error| error.to_string())?;
-            drop(file);
-            #[cfg(target_os = "windows")]
-            windows_environment::replace_settings(&temporary, &destination)?;
-            #[cfg(not(target_os = "windows"))]
-            fs::rename(&temporary, &destination).map_err(|error| error.to_string())?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temporary);
-        }
-        result
+        atomic_write(destination, &bytes)
     }
 
     fn validate(&self, directory: &Path) -> Result<PathBuf, String> {

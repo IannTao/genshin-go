@@ -1,6 +1,11 @@
 use nsh_core::prelude::*;
 use std::rc::Rc;
 
+#[cfg(target_os = "windows")]
+mod account_service;
+#[cfg(target_os = "windows")]
+mod account_store;
+pub mod accounts;
 pub mod launcher;
 mod native_environment;
 

@@ -14,6 +14,17 @@ pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, S
 
 /// External operations needed by installation selection and ordinary launch.
 pub trait LauncherEnvironment {
+    fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool>;
+    fn create_qr(&self) -> crate::accounts::AccountOperation<crate::accounts::QrSession>;
+    fn poll_qr(
+        &self,
+        qr: crate::accounts::QrSession,
+    ) -> crate::accounts::AccountOperation<crate::accounts::QrStatus>;
+    fn load_accounts(&self) -> Result<Vec<String>, String>;
+    fn save_authorization(
+        &self,
+        authorization: crate::accounts::Authorization,
+    ) -> Result<Vec<String>, String>;
     fn discover(&self) -> Result<Vec<PathBuf>, String>;
     fn load_default(&self) -> Result<Option<PathBuf>, String>;
     fn save_default(&self, directory: &Path) -> Result<(), String>;
@@ -82,7 +93,7 @@ fn select(environment: &dyn LauncherEnvironment, state: Signal<InstallationState
     }
 }
 
-fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
+pub(crate) fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
     view()
         .px_4()
         .py_3()
@@ -102,93 +113,92 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let path_environment = environment.clone();
     let refresh_environment = environment.clone();
     let launch_environment = environment.clone();
-    view()
-        .flex_1()
-        .p_6()
-        .gap_4()
-        .bg(move || theme().background)
-        .text_color(move || theme().foreground)
-        .child(text("原神启动器").text_size(px(28.0)))
-        .child(text("Windows · 国服官服"))
-        .child(text(move || state.get().message))
-        .child(text(move || {
-            state
-                .get()
-                .selected
-                .map(|p| format!("默认目录：{}", p.display()))
-                .unwrap_or_else(|| "尚未选择默认目录".into())
-        }))
-        .child(
-            scroll()
-                .flex_1()
-                .child(view().gap_2().child(dynamic(move || {
-                    state
-                        .get()
-                        .directories
-                        .into_iter()
-                        .map(|path| {
-                            let environment = environment.clone();
-                            button(format!("选择：{}", path.display()), move || {
-                                select(environment.as_ref(), state, &path)
-                            })
-                            .into_element()
+    let account_environment = environment.clone();
+    scroll().flex_1().child(
+        view()
+            .p_6()
+            .gap_4()
+            .bg(move || theme().background)
+            .text_color(move || theme().foreground)
+            .child(text("原神启动器").text_size(px(28.0)))
+            .child(text("Windows · 国服官服"))
+            .child(crate::accounts::accounts(account_environment))
+            .child(text(move || state.get().message))
+            .child(text(move || {
+                state
+                    .get()
+                    .selected
+                    .map(|p| format!("默认目录：{}", p.display()))
+                    .unwrap_or_else(|| "尚未选择默认目录".into())
+            }))
+            .child(view().gap_2().child(dynamic(move || {
+                state
+                    .get()
+                    .directories
+                    .into_iter()
+                    .map(|path| {
+                        let environment = environment.clone();
+                        button(format!("选择：{}", path.display()), move || {
+                            select(environment.as_ref(), state, &path)
                         })
-                        .collect::<Vec<_>>()
-                }))),
-        )
-        .child(button("重新查找", move || {
-            state.set(initial_state(refresh_environment.as_ref()))
-        }))
-        .child(
-            input()
-                .test_id("game-directory")
-                .label("游戏目录")
-                .h_12()
-                .px_3()
-                .bg(move || theme().secondary)
-                .placeholder("游戏目录（含 YuanShen.exe）")
-                .value(move || manual.get())
-                .on_change(move |value: &str| manual.set(value.to_owned())),
-        )
-        .child(button("使用此目录", move || {
-            select(
-                path_environment.as_ref(),
-                state,
-                Path::new(manual.get().trim().trim_matches('"')),
+                        .into_element()
+                    })
+                    .collect::<Vec<_>>()
+            })))
+            .child(button("重新查找", move || {
+                state.set(initial_state(refresh_environment.as_ref()))
+            }))
+            .child(
+                input()
+                    .test_id("game-directory")
+                    .label("游戏目录")
+                    .h_12()
+                    .px_3()
+                    .bg(move || theme().secondary)
+                    .placeholder("游戏目录（含 YuanShen.exe）")
+                    .value(move || manual.get())
+                    .on_change(move |value: &str| manual.set(value.to_owned())),
             )
-        }))
-        .child(button("选择游戏目录", move || {
-            if picking.get_untracked() {
-                return;
-            }
-            picking.set(true);
-            let environment = choose_environment.clone();
-            spawn(async move {
-                match environment.choose_directory().await {
-                    Ok(Some(path)) => select(environment.as_ref(), state, &path),
-                    Ok(None) => {}
-                    Err(error) => state.update(|s| {
-                        s.message = format!("目录选择失败：{error}。也可在上方输入路径。")
-                    }),
+            .child(button("使用此目录", move || {
+                select(
+                    path_environment.as_ref(),
+                    state,
+                    Path::new(manual.get().trim().trim_matches('"')),
+                )
+            }))
+            .child(button("选择游戏目录", move || {
+                if picking.get_untracked() {
+                    return;
                 }
-                picking.set(false);
-            });
-        }))
-        .child(button("普通启动", move || {
-            let selected = state.get_untracked().selected;
-            let result = selected
-                .ok_or_else(|| "请先选择有效游戏目录".to_owned())
-                .and_then(|path| {
-                    let directory = launch_environment
-                        .validate(&path)
-                        .map_err(|error| format!("目录已失效：{error}。请重新选择游戏目录。"))?;
-                    launch_environment.launch(&directory)
+                picking.set(true);
+                let environment = choose_environment.clone();
+                spawn(async move {
+                    match environment.choose_directory().await {
+                        Ok(Some(path)) => select(environment.as_ref(), state, &path),
+                        Ok(None) => {}
+                        Err(error) => state.update(|s| {
+                            s.message = format!("目录选择失败：{error}。也可在上方输入路径。")
+                        }),
+                    }
+                    picking.set(false);
                 });
-            state.update(|s| {
-                s.message = match result {
-                    Ok(()) => "已请求启动游戏".into(),
-                    Err(error) => format!("启动失败：{error}"),
-                }
-            });
-        }))
+            }))
+            .child(button("普通启动", move || {
+                let selected = state.get_untracked().selected;
+                let result = selected
+                    .ok_or_else(|| "请先选择有效游戏目录".to_owned())
+                    .and_then(|path| {
+                        let directory = launch_environment.validate(&path).map_err(|error| {
+                            format!("目录已失效：{error}。请重新选择游戏目录。")
+                        })?;
+                        launch_environment.launch(&directory)
+                    });
+                state.update(|s| {
+                    s.message = match result {
+                        Ok(()) => "已请求启动游戏".into(),
+                        Err(error) => format!("启动失败：{error}"),
+                    }
+                });
+            })),
+    )
 }
