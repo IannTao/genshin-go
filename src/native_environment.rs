@@ -5,11 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Provides native settings, account storage, and game launch operations.
 pub struct NativeEnvironment {
     settings: Result<PathBuf, String>,
 }
 
 impl NativeEnvironment {
+    /// Creates the native environment for the current user.
     pub fn new() -> Self {
         Self {
             settings: settings_path(),
@@ -49,6 +51,7 @@ fn settings_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法确定本机配置目录".into())
 }
 
+/// Writes bytes through a temporary file and atomically replaces the destination.
 pub(crate) fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = destination.parent().ok_or("配置路径无效")?;
     fs::create_dir_all(parent).map_err(|error| error.to_string())?;

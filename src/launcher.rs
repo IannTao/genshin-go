@@ -10,26 +10,38 @@ use std::{
     rc::Rc,
 };
 
+/// Represents an asynchronous directory selection result.
 pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, String>>>>;
 
 /// External operations needed by installation selection and ordinary launch.
 pub trait LauncherEnvironment {
+    /// Checks a saved account authorization with the remote service.
     fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool>;
+    /// Creates a new QR authorization session.
     fn create_qr(&self) -> crate::accounts::AccountOperation<crate::accounts::QrSession>;
+    /// Retrieves the current state of a QR authorization session.
     fn poll_qr(
         &self,
         qr: crate::accounts::QrSession,
     ) -> crate::accounts::AccountOperation<crate::accounts::QrStatus>;
+    /// Loads the identifiers of locally saved accounts.
     fn load_accounts(&self) -> Result<Vec<String>, String>;
+    /// Saves an authorization and returns all saved account identifiers.
     fn save_authorization(
         &self,
         authorization: crate::accounts::Authorization,
     ) -> Result<Vec<String>, String>;
+    /// Discovers supported game installations.
     fn discover(&self) -> Result<Vec<PathBuf>, String>;
+    /// Loads the saved default game directory.
     fn load_default(&self) -> Result<Option<PathBuf>, String>;
+    /// Saves a default game directory.
     fn save_default(&self, directory: &Path) -> Result<(), String>;
+    /// Validates and normalizes a game installation directory.
     fn validate(&self, directory: &Path) -> Result<PathBuf, String>;
+    /// Requests a native launch from a validated directory.
     fn launch(&self, directory: &Path) -> Result<(), String>;
+    /// Opens the platform's game directory picker.
     fn choose_directory(&self) -> DirectoryChoice;
 }
 
@@ -93,6 +105,7 @@ fn select(environment: &dyn LauncherEnvironment, state: Signal<InstallationState
     }
 }
 
+/// Renders an accessible button with the launcher's shared styling.
 pub(crate) fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
     view()
         .px_4()
