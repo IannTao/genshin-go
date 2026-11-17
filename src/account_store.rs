@@ -58,6 +58,7 @@ fn crypt(bytes: &mut [u8], protect: bool) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Loads the current user's DPAPI-protected account authorizations.
 pub fn load(path: &Path) -> Result<Vec<Authorization>, String> {
     let mut bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -71,7 +72,7 @@ pub fn load(path: &Path) -> Result<Vec<Authorization>, String> {
     let parsed = serde_json::from_slice::<StoredAccounts>(&plaintext);
     plaintext.fill(0);
     let stored = parsed.map_err(|_| "授权文件损坏，未覆盖已有数据")?;
-    if stored.version != 1 {
+    if stored.version != 2 {
         return Err("不支持此版本的授权文件".into());
     }
     for authorization in &stored.accounts {
@@ -80,6 +81,7 @@ pub fn load(path: &Path) -> Result<Vec<Authorization>, String> {
     Ok(stored.accounts)
 }
 
+/// Atomically saves or replaces one DPAPI-protected authorization.
 pub fn save(path: &Path, authorization: Authorization) -> Result<Vec<String>, String> {
     authorization.validate()?;
     let directory = path.parent().ok_or("授权目录无效")?;
@@ -98,7 +100,7 @@ pub fn save(path: &Path, authorization: Authorization) -> Result<Vec<String>, St
     accounts.push(authorization);
     let ids = accounts.iter().map(|a| a.account_id.clone()).collect();
     let mut plaintext = serde_json::to_vec(&StoredAccounts {
-        version: 1,
+        version: 2,
         accounts,
     })
     .map_err(|_| "无法编码授权")?;
@@ -120,7 +122,7 @@ mod tests {
         let path = directory.join("accounts.dpapi");
         let grant = |id: &str, token: &str| Authorization {
             account_id: id.into(),
-            game_token: token.into(),
+            cookie_header: token.into(),
         };
         assert!(load(&path).unwrap().is_empty());
         assert_eq!(
@@ -137,7 +139,7 @@ mod tests {
                 .windows(b"test-secret".len())
                 .any(|w| w == b"test-secret")
         );
-        assert_eq!(load(&path).unwrap()[0].game_token, "test-secret-one");
+        assert_eq!(load(&path).unwrap()[0].cookie_header, "test-secret-one");
         save(&path, grant("10001", "test-secret-renewed")).unwrap();
         let reopened = load(&path).unwrap();
         assert_eq!(reopened.len(), 2);
@@ -146,7 +148,7 @@ mod tests {
                 .iter()
                 .find(|a| a.account_id == "10001")
                 .unwrap()
-                .game_token,
+                .cookie_header,
             "test-secret-renewed"
         );
         fs::write(&path, b"corrupt").unwrap();
@@ -156,5 +158,22 @@ mod tests {
         fs::remove_file(&path).unwrap();
         fs::remove_file(directory.join("accounts.lock")).unwrap();
         fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    #[ignore = "reads the current user's real protected authorization"]
+    fn restored_passport_authorization_has_paired_cookie_fields() {
+        let path = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
+            .join("Genshin-Go")
+            .join("accounts-passport.dpapi");
+        let accounts = load(&path).unwrap();
+        assert!(!accounts.is_empty());
+        assert!(
+            accounts
+                .iter()
+                .any(|account| account.cookie_header.contains("ltoken_v2=")
+                    && account.cookie_header.contains("ltmid_v2=")
+                    && account.cookie_header.contains("cookie_token_v2="))
+        );
     }
 }

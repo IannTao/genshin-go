@@ -4,29 +4,38 @@ use nsh_core::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin, rc::Rc};
 
+/// Represents an asynchronous account operation at the application boundary.
 pub type AccountOperation<T> = Pin<Box<dyn Future<Output = Result<T, String>>>>;
 
+/// Holds an active passport QR login session.
 #[derive(Clone, PartialEq)]
 pub struct QrSession {
+    /// Contains the URL encoded into the QR image.
     pub url: String,
+    /// Identifies the QR login attempt to the passport service.
     pub ticket: String,
+    /// Identifies the device used for both creation and polling.
     pub device: String,
 }
 
 // Never derive Debug: this value contains an authorization secret.
+/// Contains a MiHoYo account identifier and protected session Cookie data.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Authorization {
+    /// Identifies a MiHoYo account rather than a game character.
     pub account_id: String,
-    pub game_token: String,
+    /// Contains the Cookie request header and must never be logged.
+    pub cookie_header: String,
 }
 
 impl Authorization {
+    /// Validates the account identifier and bounded Cookie payload.
     pub fn validate(&self) -> Result<(), String> {
         if self.account_id.is_empty()
             || self.account_id.len() > 20
             || !self.account_id.bytes().all(|c| c.is_ascii_digit())
-            || self.game_token.is_empty()
-            || self.game_token.len() > 8192
+            || self.cookie_header.is_empty()
+            || self.cookie_header.len() > 8192
         {
             return Err("账号授权数据无效".into());
         }
@@ -34,11 +43,17 @@ impl Authorization {
     }
 }
 
+/// Describes the passport QR state visible to the launcher.
 pub enum QrStatus {
+    /// Indicates that the QR code has not been scanned.
     Waiting,
+    /// Indicates that a phone has scanned the QR code.
     Scanned,
+    /// Contains a confirmed account authorization.
     Confirmed(Authorization),
+    /// Indicates that the QR code is no longer usable.
     Expired,
+    /// Indicates that the scan was cancelled.
     Cancelled,
 }
 
@@ -61,6 +76,7 @@ fn qr_image(url: &str) -> Result<String, String> {
     Ok(svg)
 }
 
+/// Renders MiHoYo account authorization controls in the Rust root.
 pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let message = signal(String::new());
     let session = signal(None::<QrSession>);

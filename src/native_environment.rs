@@ -22,7 +22,7 @@ impl NativeEnvironment {
             .settings
             .as_ref()
             .map_err(Clone::clone)?
-            .with_file_name("accounts.dpapi"))
+            .with_file_name("accounts-passport.dpapi"))
     }
 }
 
@@ -64,14 +64,14 @@ pub(crate) fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), Strin
             .write(true)
             .open(&temporary)
             .map_err(|error| error.to_string())?;
-        file.write_all(&bytes)
+        file.write_all(bytes)
             .and_then(|_| file.sync_all())
             .map_err(|error| error.to_string())?;
         drop(file);
         #[cfg(target_os = "windows")]
-        windows_environment::replace_settings(&temporary, &destination)?;
+        windows_environment::replace_settings(&temporary, destination)?;
         #[cfg(not(target_os = "windows"))]
-        fs::rename(&temporary, &destination).map_err(|error| error.to_string())?;
+        fs::rename(&temporary, destination).map_err(|error| error.to_string())?;
         Ok(())
     })();
     if result.is_err() {
@@ -89,12 +89,11 @@ fn ini_value<'a>(contents: &'a str, section: &str, key: &str) -> Option<&'a str>
     {
         if line.starts_with('[') && line.ends_with(']') {
             current = &line[1..line.len() - 1];
-        } else if current.eq_ignore_ascii_case(section) {
-            if let Some((name, value)) = line.split_once('=') {
-                if name.trim().eq_ignore_ascii_case(key) {
-                    return Some(value.trim());
-                }
-            }
+        } else if current.eq_ignore_ascii_case(section)
+            && let Some((name, value)) = line.split_once('=')
+            && name.trim().eq_ignore_ascii_case(key)
+        {
+            return Some(value.trim());
         }
     }
     None
@@ -103,15 +102,15 @@ fn ini_value<'a>(contents: &'a str, section: &str, key: &str) -> Option<&'a str>
 /// Normalize a game directory or a legacy launcher's parent directory.
 fn validate_installation(path: &Path) -> Result<PathBuf, String> {
     let mut candidates = vec![path.to_path_buf()];
-    if let Ok(config) = fs::read_to_string(path.join("config.ini")) {
-        if let Some(value) = ini_value(&config, "launcher", "game_install_path") {
-            let configured = PathBuf::from(value);
-            candidates.push(if configured.is_absolute() {
-                configured
-            } else {
-                path.join(configured)
-            });
-        }
+    if let Ok(config) = fs::read_to_string(path.join("config.ini"))
+        && let Some(value) = ini_value(&config, "launcher", "game_install_path")
+    {
+        let configured = PathBuf::from(value);
+        candidates.push(if configured.is_absolute() {
+            configured
+        } else {
+            path.join(configured)
+        });
     }
     candidates.push(path.join("Genshin Impact Game"));
     for directory in candidates {
@@ -236,10 +235,10 @@ impl LauncherEnvironment for NativeEnvironment {
             }
             let mut valid = Vec::new();
             for candidate in candidates {
-                if let Ok(path) = validate_installation(&candidate) {
-                    if !valid.contains(&path) {
-                        valid.push(path);
-                    }
+                if let Ok(path) = validate_installation(&candidate)
+                    && !valid.contains(&path)
+                {
+                    valid.push(path);
                 }
             }
             Ok(valid)

@@ -2,7 +2,7 @@
 
 ## Windows account authorization
 
-Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. Confirmed GameToken authorizations are stored for multiple 米哈游账号 using current-user Windows DPAPI in `%LOCALAPPDATA%/Genshin-Go/accounts.dpapi`; reopening the launcher restores the account list. Use **检查授权** to check a saved account, or **重新扫码** to renew one. QR authorization alone does not sign in to the game; account switching is a separate ticket. Authorization is not portable between Windows users or computers.
+Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. Confirmed 米游社 Cookie authorizations are stored for multiple 米哈游账号 using current-user Windows DPAPI in `%LOCALAPPDATA%/Genshin-Go/accounts-passport.dpapi`; reopening the launcher restores the account list. Use **检查授权** to check a saved account, or **重新扫码** to renew one. QR authorization alone does not sign in to the game; account switching is a separate ticket. Authorization is not portable between Windows users or computers.
 
 Protocol evidence and validation limits are in [`docs/validation/t02.md`](docs/validation/t02.md).
 

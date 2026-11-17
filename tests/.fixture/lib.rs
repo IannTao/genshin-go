@@ -40,7 +40,7 @@ impl LauncherEnvironment for Environment {
                 1 => Ok(QrStatus::Scanned),
                 2 => Ok(QrStatus::Confirmed(Authorization {
                     account_id: format!("1000{account}"),
-                    game_token: "fixture-secret".into(),
+                    cookie_header: "account_id_v2=10001; ltmid_v2=20001; ltoken_v2=fixture-secret; cookie_token_v2=fixture-cookie".into(),
                 })),
                 3 => Ok(QrStatus::Expired),
                 4 => Ok(QrStatus::Cancelled),
