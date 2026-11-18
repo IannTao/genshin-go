@@ -68,7 +68,7 @@ pub(crate) fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), Strin
             .open(&temporary)
             .map_err(|error| error.to_string())?;
         file.write_all(bytes)
-            .and_then(|_| file.sync_all())
+            .and_then(|()| file.sync_all())
             .map_err(|error| error.to_string())?;
         drop(file);
         #[cfg(target_os = "windows")]
@@ -161,7 +161,7 @@ impl LauncherEnvironment for NativeEnvironment {
                     .into_iter()
                     .find(|a| a.account_id == account_id)
                     .ok_or("账号授权不存在，请重新扫码")?;
-                crate::account_service::check(authorization)
+                crate::account_service::check(&authorization)
             })
         }
         #[cfg(not(target_os = "windows"))]
@@ -176,7 +176,7 @@ impl LauncherEnvironment for NativeEnvironment {
     ) -> crate::accounts::AccountOperation<crate::accounts::QrStatus> {
         #[cfg(target_os = "windows")]
         {
-            account_work(move || crate::account_service::poll(qr))
+            account_work(move || crate::account_service::poll(&qr))
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -306,13 +306,17 @@ impl LauncherEnvironment for NativeEnvironment {
 
 #[cfg(target_os = "windows")]
 mod windows_environment {
-    use super::*;
+    use super::{Path, PathBuf};
     use std::os::windows::ffi::OsStrExt;
     use windows::{
         Win32::{
             Foundation::ERROR_SUCCESS,
             Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW},
-            System::Registry::*,
+            System::Registry::{
+                HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY,
+                KEY_WOW64_64KEY, REG_SAM_FLAGS, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW,
+                RegGetValueW, RegOpenKeyExW,
+            },
             UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
         },
         core::{PCWSTR, PWSTR},
@@ -324,6 +328,7 @@ mod windows_environment {
 
     struct Key(HKEY);
     impl Drop for Key {
+        #[expect(unsafe_code, reason = "Releases the registry handle owned by this key")]
         fn drop(&mut self) {
             unsafe {
                 let _ = RegCloseKey(self.0);
@@ -331,6 +336,10 @@ mod windows_environment {
         }
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "Opens a registry key using live UTF-16 storage and an output handle"
+    )]
     fn open(root: HKEY, path: &str, view: REG_SAM_FLAGS) -> Option<Key> {
         let name = wide(std::ffi::OsStr::new(path));
         let mut handle = HKEY::default();
@@ -341,12 +350,13 @@ mod windows_environment {
                 PCWSTR(name.as_ptr()),
                 None,
                 KEY_READ | view,
-                &mut handle,
+                &raw mut handle,
             )
         } == ERROR_SUCCESS)
             .then(|| Key(handle))
     }
 
+    #[expect(unsafe_code, reason = "Reads registry data into a sized UTF-16 buffer")]
     fn value(key: &Key, name: &str) -> Option<String> {
         let name = wide(std::ffi::OsStr::new(name));
         let mut bytes = 0;
@@ -359,7 +369,7 @@ mod windows_environment {
                 RRF_RT_REG_SZ,
                 None,
                 None,
-                Some(&mut bytes),
+                Some(&raw mut bytes),
             ) != ERROR_SUCCESS
                 || bytes > 65536
             {
@@ -373,7 +383,7 @@ mod windows_environment {
                 RRF_RT_REG_SZ,
                 None,
                 Some(buffer.as_mut_ptr().cast()),
-                Some(&mut bytes),
+                Some(&raw mut bytes),
             ) != ERROR_SUCCESS
             {
                 return None;
@@ -383,6 +393,10 @@ mod windows_environment {
         }
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "Enumerates registry names into a fixed Windows key-name buffer"
+    )]
     pub fn registry_directories() -> Vec<PathBuf> {
         let mut result = Vec::new();
         for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
@@ -396,14 +410,14 @@ mod windows_environment {
                 };
                 for index in 0..10000 {
                     let mut name = [0_u16; 256];
-                    let mut length = name.len() as u32;
+                    let mut length = 256_u32;
                     // Registry key names have at most 255 UTF-16 code units.
                     let status = unsafe {
                         RegEnumKeyExW(
                             uninstall.0,
                             index,
                             Some(PWSTR(name.as_mut_ptr())),
-                            &mut length,
+                            &raw mut length,
                             None,
                             None,
                             None,
@@ -445,6 +459,10 @@ mod windows_environment {
         result
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "Windows atomically replaces the file using two live UTF-16 paths"
+    )]
     pub fn replace_settings(from: &Path, to: &Path) -> Result<(), String> {
         let from = wide(from.as_os_str());
         let to = wide(to.as_os_str());
@@ -459,6 +477,10 @@ mod windows_environment {
         .map_err(|error| error.to_string())
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "The shell reads executable and working-directory strings during the call"
+    )]
     pub fn launch(directory: &Path) -> Result<(), String> {
         let executable = wide(directory.join("YuanShen.exe").as_os_str());
         let directory = wide(directory.as_os_str());
@@ -489,82 +511,83 @@ mod windows_environment {
 mod tests {
     use super::*;
 
-    fn sandbox() -> PathBuf {
+    fn sandbox() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target/t01-fixtures")
             .join(format!("{}-{unique}", std::process::id()));
-        fs::create_dir_all(&path).unwrap();
-        path
+        fs::create_dir_all(&path)?;
+        Ok(path)
     }
 
-    fn installation(root: &Path) -> PathBuf {
+    fn installation(root: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let path = root.join("原神 Game");
-        fs::create_dir_all(path.join("YuanShen_Data")).unwrap();
-        fs::write(path.join("YuanShen.exe"), b"fixture: never executed").unwrap();
+        fs::create_dir_all(path.join("YuanShen_Data"))?;
+        fs::write(path.join("YuanShen.exe"), b"fixture: never executed")?;
         fs::write(
             path.join("config.ini"),
             "[General]\ngame_version=6.0.0\nchannel=1\nsub_channel=1\ngame_biz=hk4e_cn\n",
-        )
-        .unwrap();
-        path
+        )?;
+        Ok(path)
     }
 
     #[test]
-    fn native_environment_accepts_a_legacy_launcher_and_rejects_a_channel_installation() {
-        let root = sandbox();
-        let game = installation(&root);
+    fn native_environment_accepts_a_legacy_launcher_and_rejects_a_channel_installation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = sandbox()?;
+        let game = installation(&root)?;
         fs::write(
             root.join("config.ini"),
             "[launcher]\ngame_install_path=原神 Game\n",
-        )
-        .unwrap();
+        )?;
         let environment = NativeEnvironment {
             settings: Ok(root.join("settings.json")),
         };
-        let expected = environment.validate(&game).unwrap();
-        assert_eq!(environment.validate(&root).unwrap(), expected);
+        let expected = environment.validate(&game)?;
+        assert_eq!(environment.validate(&root)?, expected);
         fs::write(
             game.join("config.ini"),
             "[General]\ngame_version=6.0.0\nchannel=14\nsub_channel=0\n",
-        )
-        .unwrap();
+        )?;
         assert!(environment.validate(&game).is_err());
+        Ok(())
     }
 
     #[test]
-    fn saved_default_survives_a_new_native_environment_and_can_be_replaced() {
-        let root = sandbox();
+    fn saved_default_survives_a_new_native_environment_and_can_be_replaced()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = sandbox()?;
         let settings = root.join("config/settings.json");
         let first = NativeEnvironment {
             settings: Ok(settings.clone()),
         };
-        assert_eq!(first.load_default().unwrap(), None);
-        let game = installation(&root);
-        let game = first.validate(&game).unwrap();
-        first.save_default(&game).unwrap();
+        assert_eq!(first.load_default()?, None);
+        let game = installation(&root)?;
+        let game = first.validate(&game)?;
+        first.save_default(&game)?;
         let reopened = NativeEnvironment {
             settings: Ok(settings.clone()),
         };
-        assert_eq!(reopened.load_default().unwrap(), Some(game));
+        assert_eq!(reopened.load_default()?, Some(game));
         let other = root.join("another installation");
-        reopened.save_default(&other).unwrap();
-        assert_eq!(first.load_default().unwrap(), Some(other));
-        fs::write(settings, b"corrupt json").unwrap();
+        reopened.save_default(&other)?;
+        assert_eq!(first.load_default()?, Some(other));
+        fs::write(settings, b"corrupt json")?;
         assert!(reopened.load_default().is_err());
+        Ok(())
     }
 
     #[test]
-    fn native_environment_rejects_missing_game_files() {
-        let root = sandbox();
-        let game = installation(&root);
+    fn native_environment_rejects_missing_game_files() -> Result<(), Box<dyn std::error::Error>> {
+        let root = sandbox()?;
+        let game = installation(&root)?;
         let environment = NativeEnvironment {
             settings: Ok(root.join("settings.json")),
         };
-        fs::remove_file(game.join("YuanShen.exe")).unwrap();
+        fs::remove_file(game.join("YuanShen.exe"))?;
         assert!(environment.validate(&game).is_err());
+        Ok(())
     }
 }

@@ -33,7 +33,7 @@
 ### Issue tracker
 
 规格与任务使用 GitHub Issues：IannTao/genshin-go。
-操作约定见 `docs/agents/issue-tracker.md`。
+每完成一个 Issue，都要按[任务跟踪约定](docs/agents/issue-tracker.md)回写对应的 GitHub Issue，再报告交付。
 
 ### Triage labels
 

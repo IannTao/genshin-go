@@ -1,3 +1,4 @@
+//! Provides the native Genshin-Go launcher UI.
 use nsh_core::prelude::*;
 use std::rc::Rc;
 

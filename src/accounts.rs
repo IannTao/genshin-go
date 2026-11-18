@@ -19,10 +19,10 @@ pub struct QrSession {
 }
 
 // Never derive Debug: this value contains an authorization secret.
-/// Contains a MiHoYo account identifier and protected session Cookie data.
+/// Contains a `MiHoYo` account identifier and protected session Cookie data.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Authorization {
-    /// Identifies a MiHoYo account rather than a game character.
+    /// Identifies a `MiHoYo` account rather than a game character.
     pub account_id: String,
     /// Contains the Cookie request header and must never be logged.
     pub cookie_header: String,
@@ -76,7 +76,7 @@ fn qr_image(url: &str) -> Result<String, String> {
     Ok(svg)
 }
 
-/// Renders MiHoYo account authorization controls in the Rust root.
+/// Renders `MiHoYo` account authorization controls in the Rust root.
 pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let message = signal(String::new());
     let session = signal(None::<QrSession>);
@@ -89,70 +89,14 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         Vec::new()
     }));
     let start_scan = Rc::new(move || {
-        generation.update(|g| *g += 1);
-        let current = generation.get_untracked();
-        let expected_account = target.get_untracked();
-        session.set(None);
-        message.set("正在获取二维码…".into());
-        let environment = environment.clone();
-        spawn(async move {
-            let result = environment.create_qr().await;
-            if generation.get_untracked() != current {
-                return;
-            }
-            match result {
-                Ok(qr) => {
-                    session.set(Some(qr.clone()));
-                    message.set("等待扫描：请使用米游社扫码".into());
-                    loop {
-                        nsh_core::element::timer(std::time::Duration::from_secs(2)).await;
-                        if generation.get_untracked() != current {
-                            return;
-                        }
-                        let result = environment.poll_qr(qr.clone()).await;
-                        if generation.get_untracked() != current {
-                            return;
-                        }
-                        match result {
-                            Ok(QrStatus::Waiting) => continue,
-                            Ok(QrStatus::Scanned) => {
-                                message.set("等待确认：请在米游社确认授权".into());
-                                continue;
-                            }
-                            Ok(QrStatus::Confirmed(authorization)) => {
-                                if expected_account
-                                    .as_ref()
-                                    .is_some_and(|id| *id != authorization.account_id)
-                                {
-                                    message.set(
-                                        "扫码账号与待更新账号不一致，请使用原账号重新扫码".into(),
-                                    );
-                                    session.set(None);
-                                    break;
-                                }
-                                match environment.save_authorization(authorization) {
-                                    Ok(ids) => {
-                                        saved.set(ids);
-                                        message.set("授权已保存；尚未登录游戏".into());
-                                    }
-                                    Err(error) => {
-                                        message.set(format!("保存授权失败：{error}，请重新扫码"))
-                                    }
-                                }
-                            }
-                            Ok(QrStatus::Expired) => {
-                                message.set("二维码已过期，请刷新二维码".into())
-                            }
-                            Ok(QrStatus::Cancelled) => message.set("已取消扫码".into()),
-                            Err(error) => message.set(error),
-                        }
-                        session.set(None);
-                        break;
-                    }
-                }
-                Err(error) => message.set(error),
-            }
-        });
+        start_authorization(
+            environment.clone(),
+            generation,
+            target,
+            session,
+            message,
+            saved,
+        );
     });
     let renew_scan = start_scan.clone();
     view()
@@ -230,4 +174,76 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
             session.set(None);
             message.set("已取消扫码".into());
         }))
+}
+
+fn start_authorization(
+    environment: Rc<dyn LauncherEnvironment>,
+    generation: Signal<u64>,
+    target: Signal<Option<String>>,
+    session: Signal<Option<QrSession>>,
+    message: Signal<String>,
+    saved: Signal<Vec<String>>,
+) {
+    generation.update(|g| *g += 1);
+    let current = generation.get_untracked();
+    let expected_account = target.get_untracked();
+    session.set(None);
+    message.set("正在获取二维码…".into());
+    spawn(async move {
+        let result = environment.create_qr().await;
+        if generation.get_untracked() != current {
+            return;
+        }
+        match result {
+            Ok(qr) => {
+                session.set(Some(qr.clone()));
+                message.set("等待扫描：请使用米游社扫码".into());
+                loop {
+                    nsh_core::element::timer(std::time::Duration::from_secs(2)).await;
+                    if generation.get_untracked() != current {
+                        return;
+                    }
+                    let result = environment.poll_qr(qr.clone()).await;
+                    if generation.get_untracked() != current {
+                        return;
+                    }
+                    match result {
+                        Ok(QrStatus::Waiting) => continue,
+                        Ok(QrStatus::Scanned) => {
+                            message.set("等待确认：请在米游社确认授权".into());
+                            continue;
+                        }
+                        Ok(QrStatus::Confirmed(authorization)) => {
+                            if expected_account
+                                .as_ref()
+                                .is_some_and(|id| *id != authorization.account_id)
+                            {
+                                message
+                                    .set("扫码账号与待更新账号不一致，请使用原账号重新扫码".into());
+                                session.set(None);
+                                break;
+                            }
+                            match environment.save_authorization(authorization) {
+                                Ok(ids) => {
+                                    saved.set(ids);
+                                    message.set("授权已保存；尚未登录游戏".into());
+                                }
+                                Err(error) => {
+                                    message.set(format!("保存授权失败：{error}，请重新扫码"));
+                                }
+                            }
+                        }
+                        Ok(QrStatus::Expired) => {
+                            message.set("二维码已过期，请刷新二维码".into());
+                        }
+                        Ok(QrStatus::Cancelled) => message.set("已取消扫码".into()),
+                        Err(error) => message.set(error),
+                    }
+                    session.set(None);
+                    break;
+                }
+            }
+            Err(error) => message.set(error),
+        }
+    });
 }

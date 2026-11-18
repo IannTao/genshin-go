@@ -54,7 +54,7 @@ fn deadline(url: &str) -> Result<u64, String> {
 }
 fn cookies_to_authorization(
     headers: &[String],
-    expected_id: &str,
+    expected_account: &str,
     expected_mid: &str,
 ) -> Result<Authorization, String> {
     let mut found = std::collections::BTreeMap::new();
@@ -81,7 +81,7 @@ fn cookies_to_authorization(
         .or_else(|| found.get("account_id"))
         .ok_or("扫码确认未返回账号标识")?
         .clone();
-    if id != expected_id {
+    if id != expected_account {
         return Err("扫码账号与 Cookie 账号不一致".into());
     }
     if expected_mid.is_empty()
@@ -117,8 +117,7 @@ fn cookies_to_authorization(
 pub fn create() -> Result<QrSession, String> {
     let device = format!(
         "{:?}",
-        unsafe { windows::Win32::System::Com::CoCreateGuid() }
-            .map_err(|_| "无法生成扫码设备标识")?
+        windows::core::GUID::new().map_err(|_| "无法生成扫码设备标识")?
     );
     let (response, _) = request(&format!("{BASE}/createQRLogin"), json!({}), &device)?;
     let retcode = code(&response)?;
@@ -144,7 +143,7 @@ pub fn create() -> Result<QrSession, String> {
     })
 }
 /// Polls the passport service for the current QR login state.
-pub fn poll(qr: QrSession) -> Result<QrStatus, String> {
+pub fn poll(qr: &QrSession) -> Result<QrStatus, String> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "系统时间异常")?
@@ -176,8 +175,8 @@ pub fn poll(qr: QrSession) -> Result<QrStatus, String> {
         _ => Err("扫码服务返回未知状态，请重新扫码".into()),
     }
 }
-/// Checks whether a saved Cookie is accepted by a MiHoYo service.
-pub fn check(authorization: Authorization) -> Result<bool, String> {
+/// Checks whether a saved Cookie is accepted by a `MiHoYo` service.
+pub fn check(authorization: &Authorization) -> Result<bool, String> {
     authorization.validate()?;
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))
@@ -209,23 +208,25 @@ pub fn check(authorization: Authorization) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn extracts_only_expected_cookie_fields() {
+    fn extracts_only_expected_cookie_fields() -> Result<(), Box<dyn std::error::Error>> {
         let headers = vec![
             "account_id_v2=10001; Path=/".into(),
             "ltoken_v2=secret; HttpOnly".into(),
             "cookie_token_v2=token; Secure".into(),
             "other=ignored; Path=/".into(),
         ];
-        let auth = super::cookies_to_authorization(&headers, "10001", "mH0-20001").unwrap();
+        let auth = super::cookies_to_authorization(&headers, "10001", "mH0-20001")?;
         assert_eq!(auth.account_id, "10001");
         assert!(!auth.cookie_header.contains("other="));
         assert!(auth.cookie_header.contains("ltmid_v2=mH0-20001"));
         assert!(super::cookies_to_authorization(&headers, "10002", "mH0-20001").is_err());
+        Ok(())
     }
     #[test]
     #[ignore = "requires live Mihoyo service"]
-    fn live_unconfirmed_qr() {
-        let qr = super::create().unwrap();
-        assert!(matches!(super::poll(qr).unwrap(), super::QrStatus::Waiting));
+    fn live_unconfirmed_qr() -> Result<(), Box<dyn std::error::Error>> {
+        let qr = super::create()?;
+        assert!(matches!(super::poll(&qr)?, super::QrStatus::Waiting));
+        Ok(())
     }
 }

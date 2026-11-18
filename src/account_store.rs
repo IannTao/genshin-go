@@ -18,6 +18,10 @@ struct StoredAccounts {
     accounts: Vec<Authorization>,
 }
 
+#[expect(
+    unsafe_code,
+    reason = "DPAPI returns a Windows-owned buffer that must be copied and freed"
+)]
 fn crypt(bytes: &mut [u8], protect: bool) -> Result<Vec<u8>, String> {
     let input = CRYPT_INTEGER_BLOB {
         cbData: bytes.len().try_into().map_err(|_| "凭据过大")?,
@@ -28,23 +32,23 @@ fn crypt(bytes: &mut [u8], protect: bool) -> Result<Vec<u8>, String> {
     unsafe {
         let result = if protect {
             CryptProtectData(
-                &input,
+                &raw const input,
                 w!("Genshin-Go account authorization"),
                 None,
                 None,
                 None,
                 CRYPTPROTECT_UI_FORBIDDEN,
-                &mut output,
+                &raw mut output,
             )
         } else {
             CryptUnprotectData(
-                &input,
+                &raw const input,
                 None,
                 None,
                 None,
                 None,
                 CRYPTPROTECT_UI_FORBIDDEN,
-                &mut output,
+                &raw mut output,
             )
         };
         result.map_err(|_| {
@@ -115,58 +119,61 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_protected_accounts_round_trip_replace_and_reject_corruption() {
-        let directory = std::env::temp_dir().join(format!("genshin-go-accounts-{:?}", unsafe {
-            windows::Win32::System::Com::CoCreateGuid().unwrap()
-        }));
+    fn windows_protected_accounts_round_trip_replace_and_reject_corruption()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = std::env::temp_dir().join(format!(
+            "genshin-go-accounts-{:?}",
+            windows::core::GUID::new()?
+        ));
         let path = directory.join("accounts.dpapi");
         let grant = |id: &str, token: &str| Authorization {
             account_id: id.into(),
             cookie_header: token.into(),
         };
-        assert!(load(&path).unwrap().is_empty());
+        assert!(load(&path)?.is_empty());
+        assert_eq!(save(&path, grant("10001", "test-secret-one"))?, ["10001"]);
         assert_eq!(
-            save(&path, grant("10001", "test-secret-one")).unwrap(),
-            ["10001"]
-        );
-        assert_eq!(
-            save(&path, grant("10002", "test-secret-two")).unwrap(),
+            save(&path, grant("10002", "test-secret-two"))?,
             ["10001", "10002"]
         );
-        let encrypted = fs::read(&path).unwrap();
+        let encrypted = fs::read(&path)?;
         assert!(
             !encrypted
                 .windows(b"test-secret".len())
                 .any(|w| w == b"test-secret")
         );
-        assert_eq!(load(&path).unwrap()[0].cookie_header, "test-secret-one");
-        save(&path, grant("10001", "test-secret-renewed")).unwrap();
-        let reopened = load(&path).unwrap();
+        assert_eq!(load(&path)?[0].cookie_header, "test-secret-one");
+        save(&path, grant("10001", "test-secret-renewed"))?;
+        let reopened = load(&path)?;
         assert_eq!(reopened.len(), 2);
         assert_eq!(
             reopened
                 .iter()
                 .find(|a| a.account_id == "10001")
-                .unwrap()
+                .ok_or("renewed account missing")?
                 .cookie_header,
             "test-secret-renewed"
         );
-        fs::write(&path, b"corrupt").unwrap();
+        fs::write(&path, b"corrupt")?;
         assert!(load(&path).is_err());
         assert!(save(&path, grant("10003", "new-secret")).is_err());
-        assert_eq!(fs::read(&path).unwrap(), b"corrupt");
-        fs::remove_file(&path).unwrap();
-        fs::remove_file(directory.join("accounts.lock")).unwrap();
-        fs::remove_dir(directory).unwrap();
+        assert_eq!(fs::read(&path)?, b"corrupt");
+        fs::remove_file(&path)?;
+        fs::remove_file(directory.join("accounts.lock"))?;
+        fs::remove_dir(directory)?;
+        Ok(())
     }
 
     #[test]
     #[ignore = "reads the current user's real protected authorization"]
-    fn restored_passport_authorization_has_paired_cookie_fields() {
-        let path = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap())
-            .join("Genshin-Go")
-            .join("accounts-passport.dpapi");
-        let accounts = load(&path).unwrap();
+    fn restored_passport_authorization_has_paired_cookie_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA missing")?,
+        )
+        .join("Genshin-Go")
+        .join("accounts-passport.dpapi");
+        let accounts = load(&path)?;
         assert!(!accounts.is_empty());
         assert!(
             accounts
@@ -175,5 +182,6 @@ mod tests {
                     && account.cookie_header.contains("ltmid_v2=")
                     && account.cookie_header.contains("cookie_token_v2="))
         );
+        Ok(())
     }
 }

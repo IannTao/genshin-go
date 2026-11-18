@@ -2,9 +2,11 @@
 
 父规格：https://github.com/IannTao/genshin-go/issues/1
 
-状态：用户已确认并完成发布。28 张任务为父规格的 GitHub 子任务，全部标记 ready-for-agent；44 条原生阻塞关系已逐项验证，父规格正文与状态保持不变。T 编号是拆分编号，不是 GitHub issue 编号。
+首次发布记录：28 张任务为父规格的 GitHub 子任务，全部标记 ready-for-agent；44 条原生阻塞关系已逐项验证，父规格正文与状态保持不变。T 编号是拆分编号，不是 GitHub issue 编号。
 
-发布映射与核验结果见 [发布映射](launcher-tickets/published.json) 和 [核验结果](launcher-tickets/verification.json)。
+首次发布的[映射](launcher-tickets/published.json)和[核验结果](launcher-tickets/verification.json)作为历史快照保留。当前 Issue 编号见[稳定映射](launcher-tickets/issue-map.json)，核验方法见[任务跟踪约定](../agents/issue-tracker.md)。
+
+当前范围已取消 T10 和 T12，保留原编号。首批 SQLite 迁移随 T04 交付。
 
 ## GitHub 任务索引
 
@@ -19,10 +21,8 @@
 | T07 | [#8](https://github.com/IannTao/genshin-go/issues/8) | 下载并应用增量更新 |
 | T08 | [#9](https://github.com/IannTao/genshin-go/issues/9) | 预下载并在更新可用时安装 |
 | T09 | [#10](https://github.com/IannTao/genshin-go/issues/10) | 校验并修复游戏文件 |
-| T10 | [#11](https://github.com/IannTao/genshin-go/issues/11) | 为指定账号自动完成游戏签到 |
 | T11 | [#12](https://github.com/IannTao/genshin-go/issues/12) | 接入社区签到并展示独立结果 |
-| T12 | [#13](https://github.com/IannTao/genshin-go/issues/13) | 接入云游戏签到并展示独立结果 |
-| T13 | [#14](https://github.com/IannTao/genshin-go/issues/14) | 展示三类签到奖励日历 |
+| T13 | [#14](https://github.com/IannTao/genshin-go/issues/14) | 展示社区签到奖励日历 |
 | T14 | [#15](https://github.com/IannTao/genshin-go/issues/15) | 导入导出 UIGF 祈愿记录 |
 | T15 | [#16](https://github.com/IannTao/genshin-go/issues/16) | 展示保底与稀有度统计 |
 | T16 | [#17](https://github.com/IannTao/genshin-go/issues/17) | 查看并手动维护成就进度 |
@@ -105,29 +105,17 @@
 - 阻塞于：T06
 - 交付：以真实资源清单发现缺失或损坏文件并修复，退出游戏后修改文件；恢复后校验通过且可启动。
 
-### T10：为指定账号自动完成游戏签到
-
-- 批次：3
-- 阻塞于：T02
-- 交付：核实游戏签到服务及授权，固定一个账号，打开、跨日和休眠恢复时检查；包含有限重试、人工处理提示和手动重试。
-
 ### T11：接入社区签到并展示独立结果
 
 - 批次：3
-- 阻塞于：T10
-- 交付：核实社区签到入口，接入同一指定账号和执行流程；社区失败不阻止其他可执行项。
+- 阻塞于：T02
+- 交付：在启动器打开、跨日和休眠恢复时为指定账号检查社区签到。网络超时有限重试，授权失效或需人工验证时提示用户处理。
 
-### T12：接入云游戏签到并展示独立结果
-
-- 批次：3
-- 阻塞于：T10
-- 交付：核实云游戏签到授权和入口，接入单账号执行流程；明确区分成功、已签到、失败和待处理。
-
-### T13：展示三类签到奖励日历
+### T13：展示社区签到奖励日历
 
 - 批次：3
-- 阻塞于：T11、T12
-- 交付：核实奖励来源，展示日期及各服务真实结果；失败不标已领取，手动重试只处理未完成项。
+- 阻塞于：T11
+- 交付：核实奖励来源，展示日期及社区签到真实结果；失败不标已领取，手动重试只处理未完成项。
 
 ### T14：导入导出 UIGF 祈愿记录
 

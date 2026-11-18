@@ -138,11 +138,10 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
             .child(crate::accounts::accounts(account_environment))
             .child(text(move || state.get().message))
             .child(text(move || {
-                state
-                    .get()
-                    .selected
-                    .map(|p| format!("默认目录：{}", p.display()))
-                    .unwrap_or_else(|| "尚未选择默认目录".into())
+                state.get().selected.map_or_else(
+                    || "尚未选择默认目录".into(),
+                    |p| format!("默认目录：{}", p.display()),
+                )
             }))
             .child(view().gap_2().child(dynamic(move || {
                 state
@@ -152,14 +151,14 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     .map(|path| {
                         let environment = environment.clone();
                         button(format!("选择：{}", path.display()), move || {
-                            select(environment.as_ref(), state, &path)
+                            select(environment.as_ref(), state, &path);
                         })
                         .into_element()
                     })
                     .collect::<Vec<_>>()
             })))
             .child(button("重新查找", move || {
-                state.set(initial_state(refresh_environment.as_ref()))
+                state.set(initial_state(refresh_environment.as_ref()));
             }))
             .child(
                 input()
@@ -177,7 +176,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     path_environment.as_ref(),
                     state,
                     Path::new(manual.get().trim().trim_matches('"')),
-                )
+                );
             }))
             .child(button("选择游戏目录", move || {
                 if picking.get_untracked() {
@@ -190,7 +189,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                         Ok(Some(path)) => select(environment.as_ref(), state, &path),
                         Ok(None) => {}
                         Err(error) => state.update(|s| {
-                            s.message = format!("目录选择失败：{error}。也可在上方输入路径。")
+                            s.message = format!("目录选择失败：{error}。也可在上方输入路径。");
                         }),
                     }
                     picking.set(false);

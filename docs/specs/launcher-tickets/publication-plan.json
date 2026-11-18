@@ -94,9 +94,8 @@
     "tag": "T10",
     "batch": 3,
     "title": "[T10] 为指定账号自动完成游戏签到",
-    "blockers": [
-      2
-    ],
+    "status": "cancelled",
+    "blockers": [],
     "bodyFile": "T10.md"
   },
   {
@@ -105,7 +104,7 @@
     "batch": 3,
     "title": "[T11] 接入社区签到并展示独立结果",
     "blockers": [
-      10
+      2
     ],
     "bodyFile": "T11.md"
   },
@@ -114,19 +113,17 @@
     "tag": "T12",
     "batch": 3,
     "title": "[T12] 接入云游戏签到并展示独立结果",
-    "blockers": [
-      10
-    ],
+    "status": "cancelled",
+    "blockers": [],
     "bodyFile": "T12.md"
   },
   {
     "id": 13,
     "tag": "T13",
     "batch": 3,
-    "title": "[T13] 展示三类签到奖励日历",
+    "title": "[T13] 展示社区签到奖励日历",
     "blockers": [
-      11,
-      12
+      11
     ],
     "bodyFile": "T13.md"
   },
