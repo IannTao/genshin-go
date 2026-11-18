@@ -22,7 +22,44 @@ nsh-platform-macos = { version = "0.4.0", default-features = false }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 nsh-platform-windows = { version = "0.4.0", default-features = false }
-windows = { version = "0.62.2", features = ["Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Storage_FileSystem", "Win32_Security_Cryptography", "Win32_System_Com"] }
+windows = { version = "0.62.2", features = [
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Storage_FileSystem",
+    "Win32_Security_Cryptography",
+    "Win32_System_Com",
+] }
 ureq = { version = "3.5.1", features = ["json"] }
 tokio = { version = "1", features = ["rt"] }
 url = "2"
+
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+# 核心正确性，直接 deny
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+
+# 风格与性能，warn 即可（CI 会提升为 error）
+style = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+
+# Pedantic 选择性启用，不要全开
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"                 # 覆盖 pedantic 中的个别噪声规则
+missing_panics_doc = "allow"
+
+# Restriction 组手动挑选，严禁整组开启
+unwrap_used = "deny"
+expect_used = "warn"
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"

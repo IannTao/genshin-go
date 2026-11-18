@@ -44,3 +44,11 @@
 
 采用单领域布局：根目录 GLOSSARY.md 与 docs/adr/。
 读取规则见 `docs/agents/domain.md`。
+
+## Rust编码规范
+
+### **可见性**：默认使用私有（`fn`/`struct`），仅在必要时提升为 `pub(crate)` 或 `pub`。禁止滥用 `pub use` 破坏模块边界。
+
+### **注释**： 所有 pub 的 struct、enum、trait、函数、方法、常量都必须有 /// 注释。AI 生成的新公开项必须同步补文档注释。文档注释用第三人称陈述句：/// Returns the underlying value. 而非 /// Get the underlying value。首句以句号结尾，首句应独立说明该项是什么或做什么。
+
+### **lint**：禁止新增 #[allow(clippy::...)]。确需抑制时只能用 #[expect(<lint>, reason = "具体原因")]。CI 以 cargo clippy --workspace --all-targets -- -D warnings 为门禁，任何新增警告都会阻断合并。
