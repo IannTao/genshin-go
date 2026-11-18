@@ -188,9 +188,7 @@ pub fn check(authorization: &Authorization) -> Result<bool, String> {
     );
     let agent = agent();
     for action in ["verifyLtoken", "verifyCookieToken"] {
-        if !verify_session(&agent, action, &device, authorization)? {
-            return Ok(false);
-        }
+        verify_session(&agent, action, &device, authorization)?;
     }
     Ok(true)
 }
@@ -200,7 +198,7 @@ fn verify_session(
     action: &str,
     device: &str,
     authorization: &Authorization,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let mut response = agent
         .post(format!("{PASSPORT}/account/ma-cn-session/web/{action}"))
         .header("x-rpc-app_id", APP_ID)
@@ -215,8 +213,8 @@ fn verify_session(
         .read_json()
         .map_err(|_| "授权检查返回格式异常".to_owned())?;
     match code(&value).map_err(|_| "授权检查返回格式异常")? {
-        0 => Ok(true),
-        -100 => Ok(false),
+        0 => Ok(()),
+        // The service returned -100 for both invalid and newly scanned grants.
         value => Err(format!(
             "暂时无法验证授权（服务代码 {value}）；可重试或重新扫码"
         )),
@@ -257,12 +255,10 @@ mod tests {
         let agent = super::agent();
         let device = format!("{:?}", windows::core::GUID::new()?);
         for action in ["verifyLtoken", "verifyCookieToken"] {
-            assert!(!super::verify_session(
-                &agent,
-                action,
-                &device,
-                &authorization
-            )?);
+            assert_eq!(
+                super::verify_session(&agent, action, &device, &authorization),
+                Err("暂时无法验证授权（服务代码 -100）；可重试或重新扫码".into())
+            );
         }
         Ok(())
     }
