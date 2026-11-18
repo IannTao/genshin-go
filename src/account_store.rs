@@ -182,9 +182,11 @@ mod tests {
         assert!(
             accounts
                 .iter()
-                .any(|account| account.cookie_header.contains("ltoken_v2=")
-                    && account.cookie_header.contains("ltmid_v2=")
-                    && account.cookie_header.contains("cookie_token_v2="))
+                .any(|account| (account.cookie_header.contains("ltoken=")
+                    && account.cookie_header.contains("cookie_token="))
+                    || account.cookie_header.contains("ltoken_v2=")
+                        && account.cookie_header.contains("ltmid_v2=")
+                        && account.cookie_header.contains("cookie_token_v2="))
         );
         Ok(())
     }

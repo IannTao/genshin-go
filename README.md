@@ -2,6 +2,8 @@
 
 ## Windows account authorization
 
+The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and stores only the exchanged authorization.
+
 Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. Confirmed 米游社 Cookie authorizations are stored for multiple 米哈游账号 using current-user Windows DPAPI in `%LOCALAPPDATA%/Genshin-Go/accounts-passport.dpapi`; reopening the launcher restores the account list. Use **检查授权** to check a saved account, or **重新扫码** to renew one. Saved 米游社 authorization is intended for future check-in and wish history features. Sign in to the game in the official client after clicking **普通启动**. Authorization is not portable between Windows users or computers.
 
 See the [米游社 authorization validation](docs/validation/t02.md) and the [T03 decision and validation record](docs/validation/t03.md).
