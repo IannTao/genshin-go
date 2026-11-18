@@ -10,6 +10,7 @@ use std::{
 struct Environment {
     accounts: RefCell<Vec<String>>,
     qr_status: Signal<u32>,
+    slow_qr_creation: Signal<bool>,
     next_account: Signal<u32>,
     selected: RefCell<Option<PathBuf>>,
     directories: RefCell<Vec<PathBuf>>,
@@ -55,7 +56,11 @@ impl LauncherEnvironment for Environment {
     ) -> nsh_app_genshin_go::accounts::AccountOperation<nsh_app_genshin_go::accounts::QrSession>
     {
         self.qr_status.set(0);
-        Box::pin(async {
+        let slow = self.slow_qr_creation.get_untracked();
+        Box::pin(async move {
+            if slow {
+                nsh_core::element::timer(std::time::Duration::from_secs(1)).await;
+            }
             Ok(nsh_app_genshin_go::accounts::QrSession {
                 url: "https://user.mihoyo.com/fixture".into(),
                 ticket: "fixture".into(),
@@ -112,6 +117,7 @@ pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
         accounts: RefCell::new(Vec::new()),
         qr_status: signal(0),
+        slow_qr_creation: signal(false),
         next_account: signal(1),
         selected: RefCell::new(None),
         directories: RefCell::new(vec![
@@ -125,6 +131,7 @@ pub fn Fixture() -> impl IntoElement {
     });
     let remove_environment = environment.clone();
     let qr_status = environment.qr_status;
+    let slow_qr_creation = environment.slow_qr_creation;
     let next_account = environment.next_account;
     let fail_save = environment.fail_save;
     let fail_launch = environment.fail_launch;
@@ -132,6 +139,11 @@ pub fn Fixture() -> impl IntoElement {
     let generation = signal(0_u32);
     view()
         .flex_1()
+        .child(
+            view()
+                .on_press(move || slow_qr_creation.set(true))
+                .child(text("模拟延迟创建二维码")),
+        )
         .child(
             view()
                 .on_press(move || qr_status.set(2))

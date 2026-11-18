@@ -57,6 +57,13 @@ pub enum QrStatus {
     Cancelled,
 }
 
+#[derive(Clone, PartialEq)]
+enum Scan {
+    Idle,
+    Creating,
+    Ready(String),
+}
+
 fn qr_image(url: &str) -> Result<String, String> {
     use std::fmt::Write;
     let qr = qrcodegen::QrCode::encode_text(url, qrcodegen::QrCodeEcc::Medium)
@@ -76,10 +83,22 @@ fn qr_image(url: &str) -> Result<String, String> {
     Ok(svg)
 }
 
+fn qr_element(url: &str) -> impl IntoElement + use<> {
+    match qr_image(url) {
+        Ok(markup) => nsh_core::element::svg(nsh_core::element::ImageSrc::svg_markup(&markup))
+            .w(px(260.0))
+            .h(px(260.0))
+            .test_id("authorization-qr")
+            .label("米游社授权二维码")
+            .into_element(),
+        Err(error) => text(error).into_element(),
+    }
+}
+
 /// Renders `MiHoYo` account authorization controls in the Rust root.
 pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let message = signal(String::new());
-    let session = signal(None::<QrSession>);
+    let scan = signal(Scan::Idle);
     let generation = signal(0_u64);
     let target = signal(None::<String>);
     let checking = signal(false);
@@ -93,7 +112,7 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
             environment.clone(),
             generation,
             target,
-            session,
+            scan,
             message,
             saved,
         );
@@ -117,7 +136,9 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                             .gap_2()
                             .child(text(format!("米哈游账号：{id}")))
                             .child(button(format!("检查授权：{id}"), move || {
-                                if checking.get_untracked() || session.get_untracked().is_some() {
+                                if checking.get_untracked()
+                                    || !matches!(scan.get_untracked(), Scan::Idle)
+                                {
                                     return;
                                 }
                                 checking.set(true);
@@ -148,18 +169,9 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
             }
         }))
         .child(text(move || message.get()))
-        .child(dynamic(move || {
-            session.get().map(|qr| match qr_image(&qr.url) {
-                Ok(markup) => {
-                    nsh_core::element::svg(nsh_core::element::ImageSrc::svg_markup(&markup))
-                        .w(px(260.0))
-                        .h(px(260.0))
-                        .test_id("authorization-qr")
-                        .label("米游社授权二维码")
-                        .into_element()
-                }
-                Err(error) => text(error).into_element(),
-            })
+        .child(dynamic(move || match scan.get() {
+            Scan::Ready(url) => Some(qr_element(&url)),
+            Scan::Idle | Scan::Creating => None,
         }))
         .child(button("扫码添加米哈游账号", {
             let start = start_scan.clone();
@@ -171,7 +183,7 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         .child(button("刷新二维码", move || start_scan()))
         .child(button("取消扫码", move || {
             generation.update(|g| *g += 1);
-            session.set(None);
+            scan.set(Scan::Idle);
             message.set("已取消扫码".into());
         }))
 }
@@ -180,14 +192,14 @@ fn start_authorization(
     environment: Rc<dyn LauncherEnvironment>,
     generation: Signal<u64>,
     target: Signal<Option<String>>,
-    session: Signal<Option<QrSession>>,
+    scan: Signal<Scan>,
     message: Signal<String>,
     saved: Signal<Vec<String>>,
 ) {
     generation.update(|g| *g += 1);
     let current = generation.get_untracked();
     let expected_account = target.get_untracked();
-    session.set(None);
+    scan.set(Scan::Creating);
     message.set("正在获取二维码…".into());
     spawn(async move {
         let result = environment.create_qr().await;
@@ -196,7 +208,7 @@ fn start_authorization(
         }
         match result {
             Ok(qr) => {
-                session.set(Some(qr.clone()));
+                scan.set(Scan::Ready(qr.url.clone()));
                 message.set("等待扫描：请使用米游社扫码".into());
                 loop {
                     nsh_core::element::timer(std::time::Duration::from_secs(2)).await;
@@ -220,7 +232,7 @@ fn start_authorization(
                             {
                                 message
                                     .set("扫码账号与待更新账号不一致，请使用原账号重新扫码".into());
-                                session.set(None);
+                                scan.set(Scan::Idle);
                                 break;
                             }
                             match environment.save_authorization(authorization) {
@@ -239,11 +251,14 @@ fn start_authorization(
                         Ok(QrStatus::Cancelled) => message.set("已取消扫码".into()),
                         Err(error) => message.set(error),
                     }
-                    session.set(None);
+                    scan.set(Scan::Idle);
                     break;
                 }
             }
-            Err(error) => message.set(error),
+            Err(error) => {
+                scan.set(Scan::Idle);
+                message.set(error);
+            }
         }
     });
 }

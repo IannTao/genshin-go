@@ -164,16 +164,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    #[ignore = "reads the current user's real protected authorization"]
-    fn restored_passport_authorization_has_paired_cookie_fields()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn load_saved_passport_authorizations() -> Result<Vec<Authorization>, String> {
         let path = std::path::PathBuf::from(
             std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA missing")?,
         )
         .join("Genshin-Go")
         .join("accounts-passport.dpapi");
-        let accounts = load(&path)?;
+        load(&path)
+    }
+
+    #[test]
+    #[ignore = "reads the current user's real protected authorization"]
+    fn restored_passport_authorization_has_paired_cookie_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let accounts = load_saved_passport_authorizations()?;
         assert!(!accounts.is_empty());
         assert!(
             accounts
@@ -183,5 +187,16 @@ mod tests {
                     && account.cookie_header.contains("cookie_token_v2="))
         );
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "uses the current user's saved authorization with the live passport service"]
+    fn live_passport_accepts_saved_authorization() -> Result<(), Box<dyn std::error::Error>> {
+        for account in load_saved_passport_authorizations()? {
+            if crate::account_service::check(&account)? {
+                return Ok(());
+            }
+        }
+        Err("no saved authorization was accepted by the passport service".into())
     }
 }

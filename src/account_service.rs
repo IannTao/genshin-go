@@ -2,17 +2,21 @@
 use crate::accounts::{Authorization, QrSession, QrStatus};
 use serde_json::{Value, json};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-const BASE: &str = "https://passport-api.miyoushe.com/account/ma-cn-passport/web";
+const PASSPORT: &str = "https://passport-api.miyoushe.com";
+const APP_ID: &str = "bll8iq97cem8";
 
-fn request(endpoint: &str, body: Value, device: &str) -> Result<(Value, Vec<String>), String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))
         .max_redirects(0)
         .build()
-        .into();
-    let mut response = agent
-        .post(endpoint)
-        .header("x-rpc-app_id", "bll8iq97cem8")
+        .into()
+}
+
+fn request(action: &str, body: Value, device: &str) -> Result<(Value, Vec<String>), String> {
+    let mut response = agent()
+        .post(format!("{PASSPORT}/account/ma-cn-passport/web/{action}"))
+        .header("x-rpc-app_id", APP_ID)
         .header("x-rpc-device_id", device)
         .send_json(body)
         .map_err(|_| "网络失败：无法连接米游社扫码服务，请重试".to_owned())?;
@@ -119,7 +123,7 @@ pub fn create() -> Result<QrSession, String> {
         "{:?}",
         windows::core::GUID::new().map_err(|_| "无法生成扫码设备标识")?
     );
-    let (response, _) = request(&format!("{BASE}/createQRLogin"), json!({}), &device)?;
+    let (response, _) = request("createQRLogin", json!({}), &device)?;
     let retcode = code(&response)?;
     if retcode != 0 {
         return Err(format!("创建二维码失败（服务代码 {retcode}）"));
@@ -152,7 +156,7 @@ pub fn poll(qr: &QrSession) -> Result<QrStatus, String> {
         return Ok(QrStatus::Expired);
     }
     let (response, cookies) = request(
-        &format!("{BASE}/queryQRLoginStatus"),
+        "queryQRLoginStatus",
         json!({"ticket":qr.ticket}),
         &qr.device,
     )?;
@@ -175,19 +179,34 @@ pub fn poll(qr: &QrSession) -> Result<QrStatus, String> {
         _ => Err("扫码服务返回未知状态，请重新扫码".into()),
     }
 }
-/// Checks whether a saved Cookie is accepted by a `MiHoYo` service.
+/// Checks both saved tokens with the official passport session service.
 pub fn check(authorization: &Authorization) -> Result<bool, String> {
     authorization.validate()?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(15)))
-        .max_redirects(0)
-        .build()
-        .into();
+    let device = format!(
+        "{:?}",
+        windows::core::GUID::new().map_err(|_| "无法生成授权检查设备标识")?
+    );
+    let agent = agent();
+    for action in ["verifyLtoken", "verifyCookieToken"] {
+        if !verify_session(&agent, action, &device, authorization)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn verify_session(
+    agent: &ureq::Agent,
+    action: &str,
+    device: &str,
+    authorization: &Authorization,
+) -> Result<bool, String> {
     let mut response = agent
-        .get("https://api-takumi.mihoyo.com/binding/api/getUserGameRolesByCookie")
-        .query("game_biz", "hk4e_cn")
+        .post(format!("{PASSPORT}/account/ma-cn-session/web/{action}"))
+        .header("x-rpc-app_id", APP_ID)
+        .header("x-rpc-device_id", device)
         .header("cookie", &authorization.cookie_header)
-        .call()
+        .send_json(json!({}))
         .map_err(|_| "网络失败：无法验证米游社授权".to_owned())?;
     let value: Value = response
         .body_mut()
@@ -195,11 +214,9 @@ pub fn check(authorization: &Authorization) -> Result<bool, String> {
         .limit(64 * 1024)
         .read_json()
         .map_err(|_| "授权检查返回格式异常".to_owned())?;
-    match code(&value)? {
+    match code(&value).map_err(|_| "授权检查返回格式异常")? {
         0 => Ok(true),
-        // This endpoint also expects signed client headers. Its rejection alone
-        // cannot distinguish an expired Cookie from a missing request signature.
-        -100 | -111 => Err("暂时无法验证授权：服务拒绝了检查请求；可以重新扫码".into()),
+        -100 => Ok(false),
         value => Err(format!(
             "暂时无法验证授权（服务代码 {value}）；可重试或重新扫码"
         )),
@@ -227,6 +244,26 @@ mod tests {
     fn live_unconfirmed_qr() -> Result<(), Box<dyn std::error::Error>> {
         let qr = super::create()?;
         assert!(matches!(super::poll(&qr)?, super::QrStatus::Waiting));
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires the live passport service"]
+    fn live_passport_rejects_invalid_tokens() -> Result<(), Box<dyn std::error::Error>> {
+        let authorization = super::Authorization {
+            account_id: "0".into(),
+            cookie_header: "account_id_v2=0; ltoken_v2=invalid; cookie_token_v2=invalid".into(),
+        };
+        let agent = super::agent();
+        let device = format!("{:?}", windows::core::GUID::new()?);
+        for action in ["verifyLtoken", "verifyCookieToken"] {
+            assert!(!super::verify_session(
+                &agent,
+                action,
+                &device,
+                &authorization
+            )?);
+        }
         Ok(())
     }
 }

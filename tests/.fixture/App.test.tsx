@@ -44,6 +44,18 @@ test("offers reauthorization for an expired account without duplicating it", asy
   expect(app.texts().filter(t => t === "米哈游账号：10001").length).toBe(1);
 });
 
+test("keeps the scan status while a replacement QR is being created", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米哈游账号：10001"));
+  await app.press("模拟延迟创建二维码");
+  await app.press("重新扫码：10001");
+  await app.press("检查授权：10001");
+  expect(app.texts()).toContain("正在获取二维码…");
+  await app.waitUntil(() => app.texts().includes("等待扫描：请使用米游社扫码"));
+});
+
 test("reports phone cancellation and network failure without saving authorization", async () => {
   const app = await open(".", { clock: {} });
   await app.press("扫码添加米哈游账号");
