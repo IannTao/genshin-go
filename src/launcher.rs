@@ -24,13 +24,22 @@ pub trait LauncherEnvironment {
         &self,
         qr: crate::accounts::QrSession,
     ) -> crate::accounts::AccountOperation<crate::accounts::QrStatus>;
-    /// Loads the identifiers of locally saved accounts.
-    fn load_accounts(&self) -> Result<Vec<String>, String>;
-    /// Saves an authorization and returns all saved account identifiers.
+    /// Loads the local UID spaces and current verified account.
+    fn load_profile(&self) -> Result<crate::profile::Profile, String>;
+    /// Selects a UID space, creating it if requested.
+    fn select_uid(&self, uid: &str, create: bool) -> Result<crate::profile::Profile, String>;
+    /// Resolves the unique game UID associated with the scanned authorization.
+    fn verify_uid(
+        &self,
+        authorization: crate::accounts::Authorization,
+    ) -> crate::accounts::AccountOperation<String>;
+    /// Saves verified credentials if the expected account still matches.
     fn save_authorization(
         &self,
         authorization: crate::accounts::Authorization,
-    ) -> Result<Vec<String>, String>;
+        uid: &str,
+        expected: Option<&crate::profile::VerifiedAccount>,
+    ) -> Result<crate::profile::Profile, String>;
     /// Discovers supported game installations.
     fn discover(&self) -> Result<Vec<PathBuf>, String>;
     /// Loads the saved default game directory.
@@ -126,7 +135,6 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let path_environment = environment.clone();
     let refresh_environment = environment.clone();
     let launch_environment = environment.clone();
-    let account_environment = environment.clone();
     scroll().flex_1().child(
         view()
             .p_6()
@@ -135,7 +143,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
             .text_color(move || theme().foreground)
             .child(text("原神启动器").text_size(px(28.0)))
             .child(text("Windows · 国服官服"))
-            .child(crate::accounts::accounts(account_environment))
+            .child(crate::profile::profile_controls(environment.clone()))
             .child(text(move || state.get().message))
             .child(text(move || {
                 state.get().selected.map_or_else(

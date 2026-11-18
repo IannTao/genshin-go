@@ -1,5 +1,6 @@
 use nsh_app_genshin_go::accounts::{AccountOperation, Authorization, QrSession, QrStatus};
 use nsh_app_genshin_go::launcher::{DirectoryChoice, LauncherEnvironment, launcher};
+use nsh_app_genshin_go::profile::{Profile, VerifiedAccount};
 use nsh_core::prelude::*;
 use std::{
     cell::RefCell,
@@ -8,7 +9,8 @@ use std::{
 };
 
 struct Environment {
-    accounts: RefCell<Vec<String>>,
+    profile: RefCell<Profile>,
+    uid_lookup: Signal<u32>,
     qr_status: Signal<u32>,
     slow_qr_creation: Signal<bool>,
     next_account: Signal<u32>,
@@ -23,15 +25,46 @@ impl LauncherEnvironment for Environment {
     fn check_authorization(&self, _account_id: String) -> AccountOperation<bool> {
         Box::pin(async { Ok(false) })
     }
-    fn load_accounts(&self) -> Result<Vec<String>, String> {
-        Ok(self.accounts.borrow().clone())
+    fn load_profile(&self) -> Result<Profile, String> {
+        Ok(self.profile.borrow().clone())
     }
-    fn save_authorization(&self, authorization: Authorization) -> Result<Vec<String>, String> {
-        let mut accounts = self.accounts.borrow_mut();
-        if !accounts.contains(&authorization.account_id) {
-            accounts.push(authorization.account_id);
+    fn select_uid(&self, uid: &str, create: bool) -> Result<Profile, String> {
+        let mut profile = self.profile.borrow_mut();
+        if create && !profile.uids.iter().any(|saved| saved == uid) {
+            profile.uids.push(uid.into());
         }
-        Ok(accounts.clone())
+        profile.active_uid = Some(uid.into());
+        Ok(profile.clone())
+    }
+    fn verify_uid(&self, _authorization: Authorization) -> AccountOperation<String> {
+        let lookup = self.uid_lookup.get_untracked();
+        Box::pin(async move {
+            match lookup {
+                1 => Err("未查到该米哈游账号的游戏 UID".into()),
+                2 => Ok("987654321".into()),
+                _ => Ok("123456789".into()),
+            }
+        })
+    }
+    fn save_authorization(
+        &self,
+        authorization: Authorization,
+        uid: &str,
+        expected: Option<&VerifiedAccount>,
+    ) -> Result<Profile, String> {
+        if self.profile.borrow().account.as_ref() != expected {
+            return Err("授权已更改".into());
+        }
+        let mut profile = self.profile.borrow_mut();
+        if !profile.uids.iter().any(|saved| saved == uid) {
+            profile.uids.push(uid.into());
+        }
+        profile.active_uid.get_or_insert_with(|| uid.into());
+        profile.account = Some(VerifiedAccount {
+            account_id: authorization.account_id,
+            uid: uid.into(),
+        });
+        Ok(profile.clone())
     }
     fn poll_qr(&self, _qr: QrSession) -> AccountOperation<QrStatus> {
         let status = self.qr_status.get_untracked();
@@ -115,7 +148,8 @@ fn native(registry: &mut Registry) {
 #[component]
 pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
-        accounts: RefCell::new(Vec::new()),
+        profile: RefCell::new(Profile::default()),
+        uid_lookup: signal(0),
         qr_status: signal(0),
         slow_qr_creation: signal(false),
         next_account: signal(1),
@@ -131,6 +165,7 @@ pub fn Fixture() -> impl IntoElement {
     });
     let remove_environment = environment.clone();
     let qr_status = environment.qr_status;
+    let uid_lookup = environment.uid_lookup;
     let slow_qr_creation = environment.slow_qr_creation;
     let next_account = environment.next_account;
     let fail_save = environment.fail_save;
@@ -139,6 +174,16 @@ pub fn Fixture() -> impl IntoElement {
     let generation = signal(0_u32);
     view()
         .flex_1()
+        .child(
+            view()
+                .on_press(move || uid_lookup.set(1))
+                .child(text("模拟查不到游戏 UID")),
+        )
+        .child(
+            view()
+                .on_press(move || uid_lookup.set(2))
+                .child(text("模拟归属 UID 改变")),
+        )
         .child(
             view()
                 .on_press(move || slow_qr_creation.set(true))

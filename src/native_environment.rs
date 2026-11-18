@@ -19,12 +19,12 @@ impl NativeEnvironment {
     }
 
     #[cfg(target_os = "windows")]
-    fn accounts_path(&self) -> Result<PathBuf, String> {
+    fn database_path(&self) -> Result<PathBuf, String> {
         Ok(self
             .settings
             .as_ref()
             .map_err(Clone::clone)?
-            .with_file_name("accounts-passport.dpapi"))
+            .with_file_name("launcher.sqlite3"))
     }
 }
 
@@ -155,12 +155,9 @@ impl LauncherEnvironment for NativeEnvironment {
     fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool> {
         #[cfg(target_os = "windows")]
         {
-            let path = self.accounts_path();
+            let path = self.database_path();
             account_work(move || {
-                let authorization = crate::account_store::load(&path?)?
-                    .into_iter()
-                    .find(|a| a.account_id == account_id)
-                    .ok_or("账号授权不存在，请重新扫码")?;
+                let authorization = crate::account_store::load_authorization(&path?, &account_id)?;
                 crate::account_service::check(&authorization)
             })
         }
@@ -184,30 +181,54 @@ impl LauncherEnvironment for NativeEnvironment {
             Box::pin(async { Err("本期仅支持 Windows 扫码授权".into()) })
         }
     }
-    fn load_accounts(&self) -> Result<Vec<String>, String> {
+    fn load_profile(&self) -> Result<crate::profile::Profile, String> {
         #[cfg(target_os = "windows")]
         {
-            Ok(crate::account_store::load(&self.accounts_path()?)?
-                .into_iter()
-                .map(|a| a.account_id)
-                .collect())
+            crate::account_store::load(&self.database_path()?)
         }
         #[cfg(not(target_os = "windows"))]
         {
-            Ok(Vec::new())
+            Ok(crate::profile::Profile::default())
+        }
+    }
+    fn select_uid(&self, uid: &str, create: bool) -> Result<crate::profile::Profile, String> {
+        #[cfg(target_os = "windows")]
+        {
+            crate::account_store::select_uid(&self.database_path()?, uid, create)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (uid, create);
+            Err("本期仅支持在 Windows 保存 UID 数据空间".into())
+        }
+    }
+    fn verify_uid(
+        &self,
+        authorization: crate::accounts::Authorization,
+    ) -> crate::accounts::AccountOperation<String> {
+        #[cfg(target_os = "windows")]
+        {
+            account_work(move || crate::account_service::verify_uid(&authorization))
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = authorization;
+            Box::pin(async { Err("本期仅支持 Windows 账号归属验证".into()) })
         }
     }
     fn save_authorization(
         &self,
         authorization: crate::accounts::Authorization,
-    ) -> Result<Vec<String>, String> {
+        uid: &str,
+        expected: Option<&crate::profile::VerifiedAccount>,
+    ) -> Result<crate::profile::Profile, String> {
         #[cfg(target_os = "windows")]
         {
-            crate::account_store::save(&self.accounts_path()?, authorization)
+            crate::account_store::save(&self.database_path()?, authorization, uid, expected)
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = authorization;
+            let _ = (authorization, uid, expected);
             Err("本期仅支持 Windows 凭据保护".into())
         }
     }

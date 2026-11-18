@@ -1,7 +1,7 @@
 //! Account authorization UI; external effects use the application's environment.
 use crate::launcher::{LauncherEnvironment, button};
+use crate::profile::{Profile, VerifiedAccount};
 use nsh_core::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::{future::Future, pin::Pin, rc::Rc};
 
 /// Represents an asynchronous account operation at the application boundary.
@@ -19,8 +19,8 @@ pub struct QrSession {
 }
 
 // Never derive Debug: this value contains an authorization secret.
-/// Contains a `MiHoYo` account identifier and protected session Cookie data.
-#[derive(Clone, Serialize, Deserialize)]
+/// Contains a `MiHoYo` account identifier and session Cookie in memory.
+#[derive(Clone)]
 pub struct Authorization {
     /// Identifies a `MiHoYo` account rather than a game character.
     pub account_id: String,
@@ -62,6 +62,7 @@ enum Scan {
     Idle,
     Creating,
     Ready(String),
+    Verifying,
 }
 
 fn qr_image(url: &str) -> Result<String, String> {
@@ -95,92 +96,67 @@ fn qr_element(url: &str) -> impl IntoElement + use<> {
     }
 }
 
-/// Renders `MiHoYo` account authorization controls in the Rust root.
-pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
+/// Renders `MiHoYo` authorization controls in the Rust root.
+pub(crate) fn accounts(
+    environment: Rc<dyn LauncherEnvironment>,
+    profile: Signal<Profile>,
+) -> impl IntoElement {
     let message = signal(String::new());
     let scan = signal(Scan::Idle);
     let generation = signal(0_u64);
-    let target = signal(None::<String>);
     let checking = signal(false);
     let check_environment = environment.clone();
-    let saved = signal(environment.load_accounts().unwrap_or_else(|error| {
-        message.set(format!("读取账号失败：{error}"));
-        Vec::new()
-    }));
-    let start_scan = Rc::new(move || {
-        start_authorization(
-            environment.clone(),
-            generation,
-            target,
-            scan,
-            message,
-            saved,
-        );
+    let start = Rc::new(move || {
+        start_authorization(environment.clone(), generation, scan, message, profile);
     });
-    let renew_scan = start_scan.clone();
+    let refresh = start.clone();
     view()
         .gap_2()
         .child(text("米哈游账号"))
         .child(dynamic(move || {
-            let accounts = saved.get();
-            if accounts.is_empty() {
-                vec![text("尚未保存米哈游账号").into_element()]
-            } else {
-                accounts
-                    .into_iter()
-                    .map(|id| {
-                        let environment = check_environment.clone();
-                        let check_id = id.clone();
-                        let start = renew_scan.clone();
-                        view()
-                            .gap_2()
-                            .child(text(format!("米哈游账号：{id}")))
-                            .child(button(format!("检查授权：{id}"), move || {
-                                if checking.get_untracked()
-                                    || !matches!(scan.get_untracked(), Scan::Idle)
-                                {
-                                    return;
-                                }
-                                checking.set(true);
-                                let current = generation.get_untracked();
-                                let environment = environment.clone();
-                                let id = check_id.clone();
-                                message.set(format!("正在检查账号 {id} 授权…"));
-                                spawn(async move {
-                                    let result = environment.check_authorization(id.clone()).await;
-                                    checking.set(false);
-                                    if generation.get_untracked() != current {
-                                        return;
-                                    }
-                                    message.set(match result {
-                                        Ok(true) => format!("账号 {id} 米游社授权有效"),
-                                        Ok(false) => format!("账号 {id} 授权已失效，请重新扫码"),
-                                        Err(error) => error,
-                                    });
-                                });
-                            }))
-                            .child(button(format!("重新扫码：{id}"), move || {
-                                target.set(Some(id.clone()));
-                                start();
-                            }))
-                            .into_element()
-                    })
-                    .collect()
-            }
+            let start = start.clone();
+            let Some(account) = profile.get().account else {
+                return view()
+                    .child(text("尚未保存米哈游账号"))
+                    .child(button("扫码添加米哈游账号", move || start()))
+                    .into_element();
+            };
+            let id = account.account_id;
+            let environment = check_environment.clone();
+            view()
+                .gap_2()
+                .child(text(format!("米哈游账号：{id}")))
+                .child(text(format!("已验证游戏 UID：{}", account.uid)))
+                .child(button(format!("重新扫码：{id}"), move || start()))
+                .child(button(format!("检查授权：{id}"), move || {
+                    if checking.get_untracked() || !matches!(scan.get_untracked(), Scan::Idle) {
+                        return;
+                    }
+                    checking.set(true);
+                    let current = generation.get_untracked();
+                    let environment = environment.clone();
+                    let id = id.clone();
+                    message.set(format!("正在检查账号 {id} 授权…"));
+                    spawn(async move {
+                        let result = environment.check_authorization(id.clone()).await;
+                        checking.set(false);
+                        if generation.get_untracked() == current {
+                            message.set(match result {
+                                Ok(true) => format!("账号 {id} 米游社授权有效"),
+                                Ok(false) => format!("账号 {id} 授权已失效，请重新扫码"),
+                                Err(error) => error,
+                            });
+                        }
+                    });
+                }))
+                .into_element()
         }))
         .child(text(move || message.get()))
         .child(dynamic(move || match scan.get() {
             Scan::Ready(url) => Some(qr_element(&url)),
-            Scan::Idle | Scan::Creating => None,
+            Scan::Idle | Scan::Creating | Scan::Verifying => None,
         }))
-        .child(button("扫码添加米哈游账号", {
-            let start = start_scan.clone();
-            move || {
-                target.set(None);
-                start();
-            }
-        }))
-        .child(button("刷新二维码", move || start_scan()))
+        .child(button("刷新二维码", move || refresh()))
         .child(button("取消扫码", move || {
             generation.update(|g| *g += 1);
             scan.set(Scan::Idle);
@@ -191,14 +167,13 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
 fn start_authorization(
     environment: Rc<dyn LauncherEnvironment>,
     generation: Signal<u64>,
-    target: Signal<Option<String>>,
     scan: Signal<Scan>,
     message: Signal<String>,
-    saved: Signal<Vec<String>>,
+    profile: Signal<Profile>,
 ) {
     generation.update(|g| *g += 1);
     let current = generation.get_untracked();
-    let expected_account = target.get_untracked();
+    let expected_account = profile.get_untracked().account;
     scan.set(Scan::Creating);
     message.set("正在获取二维码…".into());
     spawn(async move {
@@ -226,23 +201,29 @@ fn start_authorization(
                             continue;
                         }
                         Ok(QrStatus::Confirmed(authorization)) => {
-                            if expected_account
-                                .as_ref()
-                                .is_some_and(|id| *id != authorization.account_id)
-                            {
-                                message
-                                    .set("扫码账号与待更新账号不一致，请使用原账号重新扫码".into());
-                                scan.set(Scan::Idle);
-                                break;
+                            scan.set(Scan::Verifying);
+                            message.set("正在验证游戏 UID 归属…".into());
+                            let result = verify_authorization(
+                                environment.as_ref(),
+                                &authorization,
+                                expected_account.as_ref(),
+                            )
+                            .await;
+                            if generation.get_untracked() != current {
+                                return;
                             }
-                            match environment.save_authorization(authorization) {
-                                Ok(ids) => {
-                                    saved.set(ids);
+                            match result.and_then(|uid| {
+                                environment.save_authorization(
+                                    authorization,
+                                    &uid,
+                                    expected_account.as_ref(),
+                                )
+                            }) {
+                                Ok(state) => {
+                                    profile.set(state);
                                     message.set("米游社授权已保存".into());
                                 }
-                                Err(error) => {
-                                    message.set(format!("保存授权失败：{error}，请重新扫码"));
-                                }
+                                Err(error) => message.set(error),
                             }
                         }
                         Ok(QrStatus::Expired) => {
@@ -261,4 +242,20 @@ fn start_authorization(
             }
         }
     });
+}
+
+async fn verify_authorization(
+    environment: &dyn LauncherEnvironment,
+    authorization: &Authorization,
+    expected: Option<&VerifiedAccount>,
+) -> Result<String, String> {
+    if expected.is_some_and(|account| account.account_id != authorization.account_id) {
+        return Err("扫码账号与待更新账号不一致，请使用原账号重新扫码".into());
+    }
+    let uid = environment.verify_uid(authorization.clone()).await?;
+    crate::profile::validate_uid(&uid).map_err(|_| "米游社返回的游戏 UID 无效")?;
+    if expected.is_some_and(|account| account.uid != uid) {
+        return Err("验证所得游戏 UID 与原授权不一致，已保留原授权".into());
+    }
+    Ok(uid)
 }

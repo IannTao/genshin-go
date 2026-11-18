@@ -1,5 +1,19 @@
 import { expect, open, test } from "nsh/test";
 
+test("creates and switches independent game UID spaces without signing in", async () => {
+  const app = await open(".");
+  await app.type("game-uid", "123456789");
+  await app.press("创建 UID 数据空间");
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  await app.press("切换至 UID：123456789");
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("当前游戏 UID：123456789");
+  expect(app.texts()).toContain("切换至 UID：987654321");
+  expect(app.texts()).toContain("尚未保存米哈游账号");
+});
+
 test("starts QR authorization and can cancel without adding an account", async () => {
   const app = await open(".");
   await app.press("扫码添加米哈游账号");
@@ -9,14 +23,32 @@ test("starts QR authorization and can cancel without adding an account", async (
   expect(app.texts()).toContain("尚未保存米哈游账号");
 });
 
-test("confirms authorization, saves accounts and restores them after reopening", async () => {
+test("links only the verified UID without changing the selected manual space", async () => {
   const app = await open(".");
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
   expect(app.texts()).toContain("米哈游账号：10001");
   await app.press("重新打开启动器");
   expect(app.texts()).toContain("米哈游账号：10001");
+  expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  expect(app.texts()).toContain("切换至 UID：123456789");
+});
+
+test("discards a first scan when no game UID can be verified", async () => {
+  const app = await open(".", { clock: {} });
+  await app.type("game-uid", "123456789");
+  await app.press("创建 UID 数据空间");
+  await app.press("模拟查不到游戏 UID");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("未查到该米哈游账号的游戏 UID"));
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("尚未保存米哈游账号");
+  expect(app.texts()).toContain("当前游戏 UID：123456789");
 });
 
 test("shows scanned and expired states and refreshes an expired QR", async () => {
@@ -87,18 +119,38 @@ test("reports service risk rejection without saving authorization", async () => 
   expect(app.texts()).toContain("尚未保存米哈游账号");
 });
 
-test("restores two distinct MiHoYo accounts after reopening", async () => {
+test("rejects another account during renewal and restores the original", async () => {
   const app = await open(".", { clock: {} });
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitUntil(() => app.texts().includes("米哈游账号：10001"));
   await app.press("模拟另一米哈游账号");
-  await app.press("扫码添加米哈游账号");
+  await app.press("重新扫码：10001");
   await app.press("模拟扫码确认");
-  await app.waitUntil(() => app.texts().includes("米哈游账号：10002"));
+  await app.waitUntil(() => app.texts().includes("扫码账号与待更新账号不一致，请使用原账号重新扫码"));
   await app.press("重新打开启动器");
   expect(app.texts()).toContain("米哈游账号：10001");
-  expect(app.texts()).toContain("米哈游账号：10002");
+  expect(app.texts()).not.toContain("米哈游账号：10002");
+});
+
+test("retains the original account and UID when renewal cannot verify the same UID", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+
+  await app.press("模拟查不到游戏 UID");
+  await app.press("重新扫码：10001");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("未查到该米哈游账号的游戏 UID"));
+  await app.press("模拟归属 UID 改变");
+  await app.press("重新扫码：10001");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("验证所得游戏 UID 与原授权不一致，已保留原授权"));
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("米哈游账号：10001");
+  expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  expect(app.texts()).not.toContain("切换至 UID：987654321");
 });
 
 test("chooses a discovered installation and keeps the default after reopening", async () => {

@@ -1,7 +1,7 @@
 //! Windows adapter for the UIGF Passport SDK.
 use crate::accounts::{Authorization, QrSession, QrStatus};
 use azure_core::http::{
-    Context, Request, Response,
+    Context, Method, Request, Response, new_http_client,
     policies::{Policy, PolicyResult},
 };
 use serde_json::Value;
@@ -18,6 +18,8 @@ use uigf_mihoyo::{
 
 const PASSPORT: &str = "https://passport-api.mihoyo.com";
 const APP_ID: &str = "ddxf5dufpuyo";
+const ROLE_ORIGIN: &str = "https://api-takumi.mihoyo.com";
+const ROLE_QUERY: &str = "game_biz=hk4e_cn";
 
 #[derive(Debug)]
 struct PassportHeaders(String);
@@ -235,6 +237,84 @@ fn authorization_from_exchange(
     Ok(authorization)
 }
 
+/// Resolves the sole official mainland-China Genshin UID for a fresh Cookie.
+pub(crate) fn verify_uid(authorization: &Authorization) -> Result<String, String> {
+    authorization.validate()?;
+    run(async {
+        let device = windows::core::GUID::new().map_err(|_| "无法生成设备标识")?;
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| "系统时间异常")?
+            .as_secs();
+        let nonce = 100_001 + device.data1 % 100_000;
+        // DS2 (client type 5 and 4X salt), as documented for the binding endpoint.
+        let digest = md5::compute(format!(
+            "salt=xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs&t={timestamp}&r={nonce}&b=&q={ROLE_QUERY}"
+        ));
+        let url = url::Url::parse(&format!(
+            "{ROLE_ORIGIN}/binding/api/getUserGameRolesByCookie?{ROLE_QUERY}"
+        ))
+        .map_err(|_| "游戏 UID 查询地址无效")?;
+        let mut request = Request::new(url, Method::Get);
+        request.insert_header("cookie", authorization.cookie_header.clone());
+        request.insert_header("origin", ROLE_ORIGIN);
+        request.insert_header("referer", "https://webstatic.mihoyo.com/");
+        request.insert_header("x-rpc-client_type", "5");
+        request.insert_header("x-rpc-app_version", "2.51.1");
+        request.insert_header("x-rpc-device_id", format!("{device:?}"));
+        request.insert_header("x-requested-with", "com.mihoyo.hyperion");
+        request.insert_header("user-agent", "Mozilla/5.0 (Linux; Android 13; M2101K9C Build/TKQ1.220829.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36 miHoYoBBS/2.51.1");
+        request.insert_header("ds", format!("{timestamp},{nonce},{digest:x}"));
+        // The existing SDK transport disables redirects for credentialed requests.
+        let reply = new_http_client(None)
+            .execute_request(&request)
+            .await
+            .map_err(|_| "网络失败：无法查询游戏 UID，请重新扫码")?;
+        let status = u16::from(reply.status());
+        if !(200..300).contains(&status) {
+            return Err(format!("游戏 UID 查询失败（HTTP {status}）"));
+        }
+        let mut bytes = vec![0; 64 * 1024];
+        let length = reply
+            .into_body()
+            .collect_into(&mut bytes)
+            .await
+            .map_err(|_| "无法读取游戏 UID 响应，或响应过大")?;
+        let value =
+            serde_json::from_slice(&bytes[..length]).map_err(|_| "游戏 UID 响应格式异常")?;
+        unique_official_uid(&value)
+    })
+}
+
+fn unique_official_uid(value: &Value) -> Result<String, String> {
+    success(value)?;
+    let roles = value["data"]["list"]
+        .as_array()
+        .ok_or("游戏 UID 响应格式异常")?;
+    let mut uid = None;
+    for role in roles {
+        if role["game_biz"].as_str() != Some("hk4e_cn") {
+            return Err("游戏 UID 响应包含非预期游戏".into());
+        }
+        let official = role["is_official"]
+            .as_bool()
+            .ok_or("游戏 UID 响应缺少服务器信息")?;
+        if !official {
+            continue;
+        }
+        let candidate = role["game_uid"]
+            .as_str()
+            .ok_or("米游社返回的游戏 UID 无效")?;
+        crate::profile::validate_uid(candidate).map_err(|_| "米游社返回的游戏 UID 无效")?;
+        if uid.is_some_and(|saved| saved != candidate) {
+            return Err("该米哈游账号对应多个官服游戏 UID，无法验证唯一归属".into());
+        }
+        uid = Some(candidate);
+    }
+    uid.map(str::to_owned)
+        .ok_or_else(|| "未查到该米哈游账号的游戏 UID".into())
+}
+
 /// Checks both saved cookies with the SDK session clients.
 pub(crate) fn check(authorization: &Authorization) -> Result<bool, String> {
     authorization.validate()?;
@@ -298,6 +378,29 @@ fn trace_session_response(action: &str, status: u16, value: &Value) {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
+    #[test]
+    fn accepts_only_a_unique_official_game_uid() -> Result<(), String> {
+        let official = json!({"game_biz":"hk4e_cn","game_uid":"123456789","is_official":true});
+        let other = json!({"game_biz":"hk4e_cn","game_uid":"987654321","is_official":false});
+        let reply = |list| json!({"retcode":0,"data":{"list":list}});
+        assert_eq!(
+            super::unique_official_uid(&reply(vec![other.clone(), official.clone()]))?,
+            "123456789"
+        );
+        assert!(super::unique_official_uid(&reply(vec![])).is_err());
+        assert!(super::unique_official_uid(&reply(vec![other])).is_err());
+        let mut invalid = official.clone();
+        invalid["game_uid"] = json!("invalid");
+        assert!(super::unique_official_uid(&reply(vec![official.clone(), invalid])).is_err());
+        let mut another = official.clone();
+        another["game_uid"] = json!("987654321");
+        assert!(super::unique_official_uid(&reply(vec![official, another])).is_err());
+        assert!(super::unique_official_uid(&json!({"retcode":-100,"data":null})).is_err());
+        Ok(())
+    }
+
     #[test]
     fn stores_only_exchanged_cookies_for_the_confirmed_account() -> Result<(), String> {
         let cookie = serde_json::json!({"uid":"123","cookie_token":"cookie"});
@@ -324,6 +427,19 @@ mod tests {
         let qr = super::create()?;
         assert!(matches!(super::poll(&qr)?, super::QrStatus::Waiting));
         Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires the live MiYouShe role service"]
+    fn live_role_lookup_rejects_invalid_cookies() {
+        let authorization = super::Authorization {
+            account_id: "0".into(),
+            cookie_header: "account_id=0; cookie_token=invalid; ltuid=0; ltoken=invalid".into(),
+        };
+        assert_eq!(
+            super::verify_uid(&authorization),
+            Err("米游社服务失败（服务代码 -100）".into())
+        );
     }
 
     #[test]

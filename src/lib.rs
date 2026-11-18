@@ -9,6 +9,7 @@ mod account_store;
 pub mod accounts;
 pub mod launcher;
 mod native_environment;
+pub mod profile;
 
 #[native_module("genshin-go/native")]
 fn native(registry: &mut Registry) {
