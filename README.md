@@ -84,3 +84,13 @@ declarations of `genshin-go/native` into `.nsh/types`. Register more with `regis
 
 NSH-generated files stay in `.nsh/`: runner sources in `.nsh/rust/` and default packages in `.nsh/out/`.
 Cargo keeps its normal `target/` directory and respects your existing `CARGO_TARGET_DIR`.
+
+## UI prototype
+
+Open the throwaway launcher layout prototype on Windows with one command:
+
+```powershell
+Start-Process .\src\ui-prototype.html
+```
+
+Use the floating arrows or the left and right arrow keys to compare variants A, B and C. The URL's `?variant=` value keeps the selected layout on reload. Account, directory, sign-in and launch controls are local demonstrations; the production Rust UI remains the app entry.
