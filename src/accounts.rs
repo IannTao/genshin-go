@@ -153,7 +153,7 @@ pub fn accounts(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                                         return;
                                     }
                                     message.set(match result {
-                                        Ok(true) => format!("账号 {id} 授权有效；尚未登录游戏"),
+                                        Ok(true) => format!("账号 {id} 米游社授权有效"),
                                         Ok(false) => format!("账号 {id} 授权已失效，请重新扫码"),
                                         Err(error) => error,
                                     });
@@ -238,7 +238,7 @@ fn start_authorization(
                             match environment.save_authorization(authorization) {
                                 Ok(ids) => {
                                     saved.set(ids);
-                                    message.set("授权已保存；尚未登录游戏".into());
+                                    message.set("米游社授权已保存".into());
                                 }
                                 Err(error) => {
                                     message.set(format!("保存授权失败：{error}，请重新扫码"));

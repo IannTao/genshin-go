@@ -13,7 +13,7 @@ test("confirms authorization, saves accounts and restores them after reopening",
   const app = await open(".");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
-  await app.waitUntil(() => app.texts().includes("授权已保存；尚未登录游戏"));
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
   expect(app.texts()).toContain("米哈游账号：10001");
   await app.press("重新打开启动器");
   expect(app.texts()).toContain("米哈游账号：10001");
@@ -34,12 +34,12 @@ test("offers reauthorization for an expired account without duplicating it", asy
   const app = await open(".", { clock: {} });
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
-  await app.waitUntil(() => app.texts().includes("授权已保存；尚未登录游戏"));
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
   await app.press("重新扫码：10001");
   await app.press("模拟扫码确认");
-  await app.waitUntil(() => app.texts().includes("授权已保存；尚未登录游戏"));
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
   await app.press("重新打开启动器");
   expect(app.texts().filter(t => t === "米哈游账号：10001").length).toBe(1);
 });
@@ -107,9 +107,26 @@ test("chooses a discovered installation and keeps the default after reopening", 
   expect(app.texts()).toContain("默认目录：D:/原神");
   await app.press("重新打开启动器");
   expect(app.texts()).toContain("默认目录：D:/原神");
+  expect(app.texts()).toContain("尚未保存米哈游账号");
   await app.press("普通启动");
   expect(app.texts()).toContain("已请求启动游戏");
   expect(app.texts()).toContain("请求启动：D:/原神");
+});
+
+test("starts the game independently of saved MiYouShe authorization", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("选择：D:/原神");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米哈游账号：10001"));
+  expect(app.texts()).toContain("米游社授权已保存");
+
+  await app.press("检查授权：10001");
+  expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("已请求启动游戏");
+  expect(app.texts()).toContain("请求启动：D:/原神");
+  expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
 });
 
 test("chooses a directory from the picker and can also enter a valid path", async () => {
