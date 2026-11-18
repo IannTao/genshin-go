@@ -29,13 +29,15 @@ The isolated interaction suite runs the same Rust launcher with a controlled
 application environment. It never launches the real game or writes the user's
 settings:
 
-```sh
-nsh check
-nsh test
-cd tests/.fixture
-nsh check
-nsh test
+On Windows, run the local checks in PowerShell 7.2 or later:
+
+```powershell
+./scripts/check-windows.ps1
 ```
+
+The script runs formatting, Clippy, the offline ticket synchronization tests,
+and the NSH checks and tests for both the root project and the interaction fixture.
+Run the [live account validation](docs/validation/t02.md#重跑验证) separately.
 
 The fixture has its own NSH entry and must run from its directory. Its hidden
 directory keeps the root runner from discovering tests for a different Rust root.
