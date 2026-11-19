@@ -1,4 +1,5 @@
 use nsh_app_genshin_go::accounts::{AccountOperation, Authorization, QrSession, QrStatus};
+use nsh_app_genshin_go::community_sign_in::{Clock, Completion, Failure, Operation};
 use nsh_app_genshin_go::game_install::{InstallControl, InstallOperation};
 use nsh_app_genshin_go::launcher::{DirectoryChoice, LauncherEnvironment, launcher};
 use nsh_app_genshin_go::profile::{Profile, VerifiedAccount};
@@ -7,6 +8,7 @@ use std::{
     cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
+    time::Duration,
 };
 
 const CONFIRMED_WITH_NEW_COOKIE: u32 = 7;
@@ -16,6 +18,10 @@ struct Environment {
     profile: RefCell<Profile>,
     revision: Cell<u64>,
     cookie: RefCell<Option<String>>,
+    sign_in_day: Signal<u64>,
+    suspended_seconds: Signal<u64>,
+    sign_in_reply: Signal<Result<Completion, Failure>>,
+    sign_in_attempts: Signal<u32>,
     uid_lookup: Signal<u32>,
     qr_status: Signal<u32>,
     slow_qr_creation: Signal<bool>,
@@ -33,6 +39,24 @@ struct Environment {
 }
 
 impl LauncherEnvironment for Environment {
+    fn community_clock(&self) -> Option<Clock> {
+        Some(Clock {
+            day: self.sign_in_day.get_untracked(),
+            suspended: Duration::from_secs(self.suspended_seconds.get_untracked()),
+        })
+    }
+    fn community_sign_in(&self, account: VerifiedAccount, day: u64) -> Operation {
+        let current = self.profile.borrow().account.clone();
+        let current_day = self.sign_in_day.get_untracked();
+        let result = self.sign_in_reply.get_untracked();
+        self.sign_in_attempts.update(|count| *count += 1);
+        Box::pin(async move {
+            nsh_core::element::timer(Duration::from_secs(1)).await;
+            assert_eq!(current.as_ref(), Some(&account));
+            assert_eq!(day, current_day);
+            result
+        })
+    }
     fn check_authorization(&self, account_id: String) -> AccountOperation<bool> {
         let matches_account = self
             .profile
@@ -128,6 +152,7 @@ impl LauncherEnvironment for Environment {
                         "fixture-original-cookie"
                     }
                     .into(),
+                    community_cookie: None,
                 })),
                 3 => Ok(QrStatus::Expired),
                 4 => Ok(QrStatus::Cancelled),
@@ -245,6 +270,10 @@ pub fn Fixture() -> impl IntoElement {
         profile: RefCell::new(Profile::default()),
         revision: Cell::new(0),
         cookie: RefCell::new(None),
+        sign_in_day: signal(1),
+        suspended_seconds: signal(0),
+        sign_in_reply: signal(Ok(Completion::AlreadySigned)),
+        sign_in_attempts: signal(0),
         uid_lookup: signal(0),
         qr_status: signal(0),
         slow_qr_creation: signal(false),
@@ -275,8 +304,50 @@ pub fn Fixture() -> impl IntoElement {
     let fail_launch = environment.fail_launch;
     let launched = environment.launched;
     let generation = signal(0_u32);
+    let sign_in_day = environment.sign_in_day;
+    let suspended_seconds = environment.suspended_seconds;
+    let sign_in_reply = environment.sign_in_reply;
+    let sign_in_attempts = environment.sign_in_attempts;
     view()
         .flex_1()
+        .child(
+            view()
+                .on_press(move || sign_in_day.update(|day| *day += 1))
+                .child(text("模拟签到跨日")),
+        )
+        .child(
+            view()
+                .on_press(move || suspended_seconds.update(|seconds| *seconds += 10))
+                .child(text("模拟休眠恢复")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Err(Failure::Other("无法连接米游社".into()))))
+                .child(text("模拟签到网络失败")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Ok(Completion::Signed)))
+                .child(text("模拟当天签到尚未完成")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Err(Failure::Timeout)))
+                .child(text("模拟签到超时")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Err(Failure::Verification)))
+                .child(text("模拟签到需要人工验证")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Err(Failure::Authorization)))
+                .child(text("模拟签到授权失效")),
+        )
+        .child(text(move || {
+            format!("签到请求次数：{}", sign_in_attempts.get())
+        }))
         .child(
             view()
                 .on_press(move || uid_lookup.set(1))
@@ -351,6 +422,7 @@ pub fn Fixture() -> impl IntoElement {
                                 Authorization {
                                     account_id: "10002".into(),
                                     cookie_header: "fixture-cookie".into(),
+                                    community_cookie: None,
                                 },
                                 "987654321",
                                 None,

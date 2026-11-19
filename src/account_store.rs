@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 fn database_error(error: &rusqlite::Error) -> String {
     format!("本机 SQLite 操作失败：{error}")
@@ -116,6 +116,13 @@ fn open(path: &Path) -> Result<Connection, String> {
             )
             .map_err(|error| database_error(&error))?;
     }
+    if version < 5 {
+        migration
+            .execute_batch(
+                "ALTER TABLE account_authorization ADD COLUMN protected_community_cookie BLOB;",
+            )
+            .map_err(|error| database_error(&error))?;
+    }
     migration
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| database_error(&error))?;
@@ -168,6 +175,17 @@ fn current_account(db: &Connection) -> rusqlite::Result<Option<VerifiedAccount>>
     .optional()
 }
 
+/// Checks whether the specified authorization still matches the saved revision.
+pub(crate) fn is_current_authorization(
+    path: &Path,
+    account: &VerifiedAccount,
+) -> Result<bool, String> {
+    Ok(current_account(&open(path)?)
+        .map_err(|error| database_error(&error))?
+        .as_ref()
+        == Some(account))
+}
+
 /// Reads a consistent snapshot of the local UID spaces and account metadata.
 pub(crate) fn load(path: &Path) -> Result<Profile, String> {
     let mut db = open(path)?;
@@ -207,9 +225,9 @@ pub(crate) fn select_uid(path: &Path, uid: &str, create: bool) -> Result<Profile
     Ok(state)
 }
 
-/// Loads and decrypts the Cookie for the specified saved account.
+/// Loads and decrypts the web Cookie for the specified saved account.
 pub(crate) fn load_authorization(path: &Path, account_id: &str) -> Result<Authorization, String> {
-    let mut encrypted: Vec<u8> = open(path)?
+    let encrypted: Vec<u8> = open(path)?
         .query_row(
             "SELECT protected_cookie FROM account_authorization WHERE singleton = 1 AND account_id = ?1",
             [account_id],
@@ -218,13 +236,68 @@ pub(crate) fn load_authorization(path: &Path, account_id: &str) -> Result<Author
         .optional()
         .map_err(|error| database_error(&error))?
         .ok_or("账号授权不存在，请重新扫码")?;
-    let plaintext = crypt(&mut encrypted, false)?;
     let authorization = Authorization {
         account_id: account_id.into(),
-        cookie_header: String::from_utf8(plaintext).map_err(|_| "本机凭据损坏，请重新扫码")?,
+        cookie_header: decrypt_cookie(encrypted)?,
+        community_cookie: None,
     };
     authorization.validate()?;
     Ok(authorization)
+}
+
+/// Holds the credential material needed for community sign-in.
+pub(crate) struct CommunityGrant {
+    /// Contains the web session used to read the day's task state.
+    pub(crate) web_cookie: String,
+    /// Contains the optional App session used to submit sign-in.
+    pub(crate) community_cookie: Option<String>,
+    /// Identifies the local Passport device used to obtain the session.
+    pub(crate) device: String,
+}
+
+/// Loads the web and community Cookies and device ID for the exact saved authorization.
+pub(crate) fn load_community_grant(
+    path: &Path,
+    account: &VerifiedAccount,
+) -> Result<Option<CommunityGrant>, String> {
+    let grant = open(path)?
+        .query_row(
+            "SELECT protected_cookie, protected_community_cookie, device_id
+             FROM account_authorization CROSS JOIN passport_device
+             WHERE account_authorization.singleton = 1 AND passport_device.singleton = 1
+               AND account_id = ?1 AND uid = ?2 AND revision = ?3",
+            params![account.account_id, account.uid, account.revision],
+            |row| {
+                Ok((
+                    row.get::<_, Vec<u8>>(0)?,
+                    row.get::<_, Option<Vec<u8>>>(1)?,
+                    row.get(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| database_error(&error))?;
+    grant
+        .map(|(web, community, device)| {
+            Ok(CommunityGrant {
+                web_cookie: decrypt_cookie(web)?,
+                community_cookie: community.map(decrypt_cookie).transpose()?,
+                device,
+            })
+        })
+        .transpose()
+}
+
+fn decrypt_cookie(mut encrypted: Vec<u8>) -> Result<String, String> {
+    let plaintext = crypt(&mut encrypted, false)?;
+    String::from_utf8(plaintext).map_err(|_| "本机凭据损坏，请重新扫码".into())
+}
+
+fn encrypt_cookie(cookie: String) -> Result<Vec<u8>, String> {
+    let mut plaintext = cookie.into_bytes();
+    let encrypted = crypt(&mut plaintext, true);
+    plaintext.fill(0);
+    encrypted
 }
 
 /// Clears the business records for one UID and keeps its history available for future writes.
@@ -262,10 +335,11 @@ pub(crate) fn save(
     {
         return Err("新授权与原账号或游戏 UID 不一致，已保留原授权".into());
     }
-    let mut plaintext = authorization.cookie_header.into_bytes();
-    let encrypted = crypt(&mut plaintext, true);
-    plaintext.fill(0);
-    let encrypted = encrypted?;
+    let encrypted = encrypt_cookie(authorization.cookie_header)?;
+    let community = authorization
+        .community_cookie
+        .map(encrypt_cookie)
+        .transpose()?;
     let mut db = open(path)?;
     let write = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -292,12 +366,15 @@ pub(crate) fn save(
     write
         .execute(
             "
-        INSERT INTO account_authorization (singleton, account_id, uid, protected_cookie, revision)
-        VALUES (1, ?1, ?2, ?3, lower(hex(randomblob(16))))
+        INSERT INTO account_authorization
+            (singleton, account_id, uid, protected_cookie, protected_community_cookie, revision)
+        VALUES (1, ?1, ?2, ?3, ?4, lower(hex(randomblob(16))))
         ON CONFLICT(singleton) DO UPDATE SET
-            protected_cookie = excluded.protected_cookie, revision = excluded.revision
+            protected_cookie = excluded.protected_cookie,
+            protected_community_cookie = excluded.protected_community_cookie,
+            revision = excluded.revision
     ",
-            params![authorization.account_id, uid, encrypted],
+            params![authorization.account_id, uid, encrypted, community],
         )
         .map_err(|error| database_error(&error))?;
     let state = snapshot(&write).map_err(|error| database_error(&error))?;
@@ -390,7 +467,59 @@ mod tests {
         Authorization {
             account_id: account.into(),
             cookie_header: cookie.into(),
+            community_cookie: None,
         }
+    }
+
+    #[test]
+    fn community_cookie_is_protected_and_bound_to_the_saved_revision()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let db = open(&path)?;
+        db.execute_batch(
+            "ALTER TABLE account_authorization DROP COLUMN protected_community_cookie;
+             PRAGMA user_version = 4;",
+        )?;
+        db.execute("INSERT INTO uid_spaces (uid) VALUES ('123456789')", [])?;
+        db.execute(
+            "INSERT INTO account_authorization
+                (singleton, account_id, uid, protected_cookie, revision)
+             VALUES (1, '10001', '123456789', ?1, 'old')",
+            [encrypt_cookie("original-web-cookie".into())?],
+        )?;
+        drop(db);
+        let old = load(&path)?.account.ok_or("missing legacy account")?;
+        let legacy = load_community_grant(&path, &old)?.ok_or("legacy grant unavailable")?;
+        assert_eq!(legacy.web_cookie, "original-web-cookie");
+        assert!(legacy.community_cookie.is_none());
+
+        let mut grant = grant("10001", "renewed-web-cookie");
+        grant.community_cookie = Some("test-community-secret".into());
+        let current = save(&path, grant, &old.uid, Some(&old))?
+            .account
+            .ok_or("missing renewed account")?;
+        assert!(load_community_grant(&path, &old)?.is_none());
+        let renewed = load_community_grant(&path, &current)?.ok_or("renewed grant unavailable")?;
+        assert_eq!(
+            renewed.community_cookie.as_deref(),
+            Some("test-community-secret")
+        );
+        assert!(
+            load_authorization(&path, "10001")?
+                .community_cookie
+                .is_none()
+        );
+        assert!(
+            !fs::read(&path)?
+                .windows(b"test-community-secret".len())
+                .any(|bytes| bytes == b"test-community-secret")
+        );
+
+        remove_authorization(&path, &current)?;
+        assert!(load_community_grant(&path, &current)?.is_none());
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
     }
 
     fn seed_legacy_authorizations(path: &Path, version: u32, count: u32) -> Result<(), String> {

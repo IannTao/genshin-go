@@ -51,6 +51,10 @@ pub(crate) fn profile_controls(environment: Rc<dyn LauncherEnvironment>) -> impl
     view()
         .gap_4()
         .child(crate::accounts::accounts(environment.clone(), profile))
+        .child(crate::community_sign_in::controls(
+            environment.clone(),
+            profile,
+        ))
         .child(spaces(environment, profile, error))
 }
 

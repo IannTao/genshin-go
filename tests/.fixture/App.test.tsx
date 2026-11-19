@@ -1,5 +1,100 @@
 import { expect, open, test } from "nsh/test";
 
+test("automatically checks community sign-in for the saved account when reopening", async () => {
+  const app = await open(".", { clock: {} });
+  expect(app.texts()).toContain("签到请求次数：0");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("米游社授权已保存");
+  await app.press("重新打开启动器");
+  await app.waitFor("社区签到：待处理");
+  await app.waitFor("社区签到：已签到");
+  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).not.toContain("重试社区签到");
+});
+
+test("checks community sign-in again after a new day and a same-day resume", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("社区签到：已签到");
+  await app.press("模拟休眠恢复");
+  await app.waitFor("签到请求次数：2");
+  await app.waitFor("社区签到：已签到");
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  await app.press("模拟签到网络失败");
+  await app.press("模拟签到跨日");
+  await app.waitFor("社区签到：失败，无法连接米游社");
+  await app.press("模拟当天签到尚未完成");
+  await app.press("模拟休眠恢复");
+  await app.waitFor("社区签到：成功");
+  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  await app.press("模拟签到网络失败");
+  await app.press("模拟休眠恢复");
+  await app.waitFor("签到请求次数：5");
+  await app.wait(2000);
+  expect(app.texts()).toContain("社区签到：成功");
+  expect(app.texts()).not.toContain("重试社区签到");
+});
+
+test("bounds community sign-in timeout retries and lets the user retry unfinished sign-in", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("模拟签到超时");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("社区签到：待处理");
+  await app.wait(7000);
+  expect(app.texts()).toContain("社区签到：失败，网络超时，请重试");
+  expect(app.texts()).toContain("签到请求次数：3");
+  await app.press("模拟当天签到尚未完成");
+  await app.press("重试社区签到");
+  await app.waitFor("社区签到：成功");
+  expect(app.texts()).toContain("签到请求次数：4");
+  expect(app.texts()).not.toContain("重试社区签到");
+});
+
+test("waits for the user when community sign-in requires verification or a new scan", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("模拟签到需要人工验证");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("签到请求次数：1");
+  await app.press("模拟签到跨日");
+  await app.waitFor("社区签到：失败，请在米游社完成验证或签到后重试");
+  await app.press("模拟休眠恢复");
+  await app.press("模拟签到跨日");
+  await app.wait(4000);
+  expect(app.texts()).toContain("签到请求次数：1");
+
+  await app.press("模拟签到授权失效");
+  await app.press("重试社区签到");
+  await app.waitFor("社区签到：失败，签到授权不可用，请重新扫码");
+  expect(app.texts()).not.toContain("重试社区签到");
+  await app.press("模拟签到跨日");
+  await app.wait(4000);
+  expect(app.texts()).toContain("签到请求次数：2");
+
+  await app.press("模拟当天签到尚未完成");
+  await app.press("重新扫码：10001");
+  await app.press("模拟扫码确认新凭据");
+  await app.waitFor("社区签到：成功");
+  expect(app.texts()).toContain("签到请求次数：3");
+});
+
+test("cancels pending community sign-in retries when the saved account is removed", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("模拟签到超时");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("签到请求次数：1");
+  await app.press("移除账号：10001");
+  await app.wait(7000);
+  expect(app.texts()).toContain("签到请求次数：1");
+  expect(app.texts()).not.toContain("社区签到：待处理");
+});
+
 test("pauses a new installation and waits for manual resume after reopening", async () => {
   const app = await open(".", { clock: {} });
   const texts = () => app.texts().map(text => text.replaceAll("\\", "/"));

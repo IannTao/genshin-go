@@ -17,7 +17,8 @@ use uigf_mihoyo::{
 };
 
 const PASSPORT: &str = "https://passport-api.mihoyo.com";
-const APP_ID: &str = "ddxf5dufpuyo";
+/// Identifies the community Passport App used to obtain the launcher session.
+pub(crate) const APP_ID: &str = "bll8iq97cem8";
 const ROLE_ORIGIN: &str = "https://api-takumi.mihoyo.com";
 const ROLE_QUERY: &str = "game_biz=hk4e_cn";
 
@@ -35,6 +36,7 @@ impl Policy for PassportHeaders {
         request.insert_header("x-rpc-app_id", APP_ID);
         request.insert_header("x-rpc-device_id", self.0.clone());
         request.insert_header("x-rpc-client_type", "3");
+        request.insert_header("x-rpc-game_biz", "bbs_cn");
         next[0].send(ctx, request, &next[1..]).await
     }
 }
@@ -196,7 +198,8 @@ async fn exchange(passport: &PassportClient, data: &Value) -> Result<Authorizati
         .as_array()
         .and_then(|tokens| tokens.iter().find(|t| t["token_type"] == 1))
         .ok_or("扫码确认未返回 SToken")?;
-    let session = format!("mid={mid}; stoken={}", cookie_value(&stoken["token"])?);
+    let stoken = cookie_value(&stoken["token"])?;
+    let session = format!("mid={mid}; stoken={stoken}");
     let tokens = passport.get_passport_account_token_api_client();
     let (_, cookie) = response(
         tokens
@@ -206,7 +209,10 @@ async fn exchange(passport: &PassportClient, data: &Value) -> Result<Authorizati
     success(&cookie)?;
     let (_, login) = response(tokens.get_l_token_by_stoken(session, None).await)?;
     success(&login)?;
-    authorization_from_exchange(aid, &cookie["data"], &login["data"])
+    let mut authorization = authorization_from_exchange(aid, &cookie["data"], &login["data"])?;
+    authorization.community_cookie = Some(format!("stuid={aid}; stoken={stoken}; mid={mid}"));
+    authorization.validate()?;
+    Ok(authorization)
 }
 
 fn authorization_from_exchange(
@@ -224,6 +230,7 @@ fn authorization_from_exchange(
         cookie_header: format!(
             "account_id={aid}; cookie_token={cookie}; ltuid={aid}; ltoken={login}"
         ),
+        community_cookie: None,
     };
     authorization.validate()?;
     Ok(authorization)
@@ -434,6 +441,7 @@ mod tests {
         let authorization = super::Authorization {
             account_id: "0".into(),
             cookie_header: "account_id=0; cookie_token=invalid; ltuid=0; ltoken=invalid".into(),
+            community_cookie: None,
         };
         assert_eq!(
             super::verify_uid(&authorization, &probe_device()?),
@@ -448,6 +456,7 @@ mod tests {
         let authorization = super::Authorization {
             account_id: "0".into(),
             cookie_header: "account_id_v2=0; ltoken_v2=invalid; cookie_token_v2=invalid".into(),
+            community_cookie: None,
         };
         assert_eq!(
             super::check(&authorization, &probe_device()?),

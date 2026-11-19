@@ -16,6 +16,22 @@ pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, S
 
 /// External operations used by the launcher's Windows and test environments.
 pub trait LauncherEnvironment {
+    /// Samples the community service date and cumulative system suspend time.
+    fn community_clock(&self) -> Option<crate::community_sign_in::Clock> {
+        None
+    }
+    /// Checks and completes the saved account's community sign-in on the given day.
+    fn community_sign_in(
+        &self,
+        _account: crate::profile::VerifiedAccount,
+        _day: u64,
+    ) -> crate::community_sign_in::Operation {
+        Box::pin(async {
+            Err(crate::community_sign_in::Failure::Other(
+                "本期仅支持 Windows 社区签到".into(),
+            ))
+        })
+    }
     /// Checks a saved account authorization with the remote service.
     fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool>;
     /// Creates a new QR authorization session.

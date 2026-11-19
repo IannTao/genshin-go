@@ -165,6 +165,24 @@ pub(crate) fn save_default_at(destination: &Path, directory: &Path) -> Result<()
 }
 
 impl LauncherEnvironment for NativeEnvironment {
+    #[cfg(target_os = "windows")]
+    fn community_clock(&self) -> Option<crate::community_sign_in::Clock> {
+        crate::community_service::clock()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn community_sign_in(
+        &self,
+        account: crate::profile::VerifiedAccount,
+        day: u64,
+    ) -> crate::community_sign_in::Operation {
+        use crate::community_sign_in::Failure;
+        let path = self.database_path();
+        Box::pin(async move {
+            crate::community_service::sign_in(path.map_err(Failure::Other)?, account, day).await
+        })
+    }
+
     fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool> {
         #[cfg(target_os = "windows")]
         {

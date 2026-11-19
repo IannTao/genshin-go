@@ -7,6 +7,9 @@ mod account_service;
 #[cfg(target_os = "windows")]
 mod account_store;
 pub mod accounts;
+#[cfg(target_os = "windows")]
+mod community_service;
+pub mod community_sign_in;
 pub mod game_install;
 pub mod launcher;
 mod native_environment;

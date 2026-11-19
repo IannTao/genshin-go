@@ -19,13 +19,15 @@ pub struct QrSession {
 }
 
 // Never derive Debug: this value contains an authorization secret.
-/// Contains a `MiHoYo` account identifier and session Cookie in memory.
+/// Contains a `MiHoYo` account identifier and its in-memory session cookies.
 #[derive(Clone)]
 pub struct Authorization {
     /// Identifies a `MiHoYo` account rather than a game character.
     pub account_id: String,
     /// Contains the Cookie request header and must never be logged.
     pub cookie_header: String,
+    /// Contains the optional session Cookie used for community sign-in submissions.
+    pub community_cookie: Option<String>,
 }
 
 impl Authorization {
@@ -36,6 +38,10 @@ impl Authorization {
             || !self.account_id.bytes().all(|c| c.is_ascii_digit())
             || self.cookie_header.is_empty()
             || self.cookie_header.len() > 8192
+            || self
+                .community_cookie
+                .as_ref()
+                .is_some_and(|cookie| cookie.is_empty() || cookie.len() > 8192)
         {
             return Err("账号授权数据无效".into());
         }
