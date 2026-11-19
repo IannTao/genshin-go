@@ -49,13 +49,6 @@ fn client(device: &str) -> Result<PassportClient, String> {
         .map_err(|_| "无法初始化米游社服务".into())
 }
 
-fn device_id() -> Result<String, String> {
-    Ok(format!(
-        "{:?}",
-        windows::core::GUID::new().map_err(|_| "无法生成设备标识")?
-    ))
-}
-
 fn run<T>(future: impl Future<Output = Result<T, String>>) -> Result<T, String> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -111,13 +104,12 @@ fn deadline(url: &str) -> Result<u64, String> {
         .ok_or_else(|| "二维码缺少有效期".into())
 }
 /// Creates an App QR login ticket.
-pub(crate) fn create() -> Result<QrSession, String> {
+pub(crate) fn create(device: &str) -> Result<QrSession, String> {
     run(async {
-        let device = device_id()?;
-        let client = client(&device)?.get_passport_qr_login_api_client();
+        let client = client(device)?.get_passport_qr_login_api_client();
         let body = QrLoginCreateRequest {
             app_id: Some(APP_ID.into()),
-            device: Some(device.clone()),
+            device: Some(device.into()),
             ..Default::default()
         };
         let (_, result) = response(
@@ -141,7 +133,7 @@ pub(crate) fn create() -> Result<QrSession, String> {
         Ok(QrSession {
             url,
             ticket: nonempty(&result["data"]["ticket"])?,
-            device,
+            device: device.into(),
         })
     })
 }
@@ -238,15 +230,15 @@ fn authorization_from_exchange(
 }
 
 /// Resolves the sole official mainland-China Genshin UID for a fresh Cookie.
-pub(crate) fn verify_uid(authorization: &Authorization) -> Result<String, String> {
+pub(crate) fn verify_uid(authorization: &Authorization, device: &str) -> Result<String, String> {
     authorization.validate()?;
     run(async {
-        let device = windows::core::GUID::new().map_err(|_| "无法生成设备标识")?;
+        let random = windows::core::GUID::new().map_err(|_| "无法生成 UID 查询随机数")?;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| "系统时间异常")?
             .as_secs();
-        let nonce = 100_001 + device.data1 % 100_000;
+        let nonce = 100_001 + random.data1 % 100_000;
         // DS2 (client type 5 and 4X salt), as documented for the binding endpoint.
         let digest = md5::compute(format!(
             "salt=xV8v4Qu54lUKrEYFZkJhB8cuOh9Asafs&t={timestamp}&r={nonce}&b=&q={ROLE_QUERY}"
@@ -261,7 +253,7 @@ pub(crate) fn verify_uid(authorization: &Authorization) -> Result<String, String
         request.insert_header("referer", "https://webstatic.mihoyo.com/");
         request.insert_header("x-rpc-client_type", "5");
         request.insert_header("x-rpc-app_version", "2.51.1");
-        request.insert_header("x-rpc-device_id", format!("{device:?}"));
+        request.insert_header("x-rpc-device_id", device.to_owned());
         request.insert_header("x-requested-with", "com.mihoyo.hyperion");
         request.insert_header("user-agent", "Mozilla/5.0 (Linux; Android 13; M2101K9C Build/TKQ1.220829.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/108.0.5359.128 Mobile Safari/537.36 miHoYoBBS/2.51.1");
         request.insert_header("ds", format!("{timestamp},{nonce},{digest:x}"));
@@ -316,10 +308,9 @@ fn unique_official_uid(value: &Value) -> Result<String, String> {
 }
 
 /// Checks both saved cookies with the SDK session clients.
-pub(crate) fn check(authorization: &Authorization) -> Result<bool, String> {
+pub(crate) fn check(authorization: &Authorization, device: &str) -> Result<bool, String> {
     authorization.validate()?;
     run(async {
-        let device = device_id()?;
         let v4 = PassportV4Client::with_no_credential("https://passport-api-v4.mihoyo.com", None)
             .map_err(|_| "无法初始化授权检查")?;
         let body = JsonObject::default()
@@ -330,7 +321,7 @@ pub(crate) fn check(authorization: &Authorization) -> Result<bool, String> {
             .verify_l_token(authorization.cookie_header.clone(), body, None)
             .await;
         verify("verifyLtoken", response(ltoken)?)?;
-        let cookie = client(&device)?
+        let cookie = client(device)?
             .get_passport_web_session_api_client()
             .verify_cookie_token(authorization.cookie_header.clone(), None)
             .await;
@@ -380,6 +371,10 @@ fn trace_session_response(action: &str, status: u16, value: &Value) {
 mod tests {
     use serde_json::json;
 
+    fn probe_device() -> Result<String, windows::core::Error> {
+        Ok(format!("{:?}", windows::core::GUID::new()?))
+    }
+
     #[test]
     fn accepts_only_a_unique_official_game_uid() -> Result<(), String> {
         let official = json!({"game_biz":"hk4e_cn","game_uid":"123456789","is_official":true});
@@ -424,34 +419,40 @@ mod tests {
     #[test]
     #[ignore = "requires live Mihoyo service"]
     fn live_unconfirmed_qr() -> Result<(), Box<dyn std::error::Error>> {
-        let qr = super::create()?;
-        assert!(matches!(super::poll(&qr)?, super::QrStatus::Waiting));
+        let device = probe_device()?;
+        for _ in 0..2 {
+            let qr = super::create(&device)?;
+            assert_eq!(qr.device, device);
+            assert!(matches!(super::poll(&qr)?, super::QrStatus::Waiting));
+        }
         Ok(())
     }
 
     #[test]
     #[ignore = "requires the live MiYouShe role service"]
-    fn live_role_lookup_rejects_invalid_cookies() {
+    fn live_role_lookup_rejects_invalid_cookies() -> Result<(), windows::core::Error> {
         let authorization = super::Authorization {
             account_id: "0".into(),
             cookie_header: "account_id=0; cookie_token=invalid; ltuid=0; ltoken=invalid".into(),
         };
         assert_eq!(
-            super::verify_uid(&authorization),
+            super::verify_uid(&authorization, &probe_device()?),
             Err("米游社服务失败（服务代码 -100）".into())
         );
+        Ok(())
     }
 
     #[test]
     #[ignore = "requires the live passport service"]
-    fn live_passport_rejects_invalid_tokens() {
+    fn live_passport_rejects_invalid_tokens() -> Result<(), windows::core::Error> {
         let authorization = super::Authorization {
             account_id: "0".into(),
             cookie_header: "account_id_v2=0; ltoken_v2=invalid; cookie_token_v2=invalid".into(),
         };
         assert_eq!(
-            super::check(&authorization),
+            super::check(&authorization, &probe_device()?),
             Err("暂时无法验证授权（服务代码 -100）；可重试或重新扫码".into())
         );
+        Ok(())
     }
 }

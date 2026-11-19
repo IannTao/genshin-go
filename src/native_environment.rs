@@ -157,8 +157,12 @@ impl LauncherEnvironment for NativeEnvironment {
         {
             let path = self.database_path();
             account_work(move || {
-                let authorization = crate::account_store::load_authorization(&path?, &account_id)?;
-                crate::account_service::check(&authorization)
+                let path = path?;
+                let authorization = crate::account_store::load_authorization(&path, &account_id)?;
+                crate::account_service::check(
+                    &authorization,
+                    &crate::account_store::device_id(&path)?,
+                )
             })
         }
         #[cfg(not(target_os = "windows"))]
@@ -219,7 +223,13 @@ impl LauncherEnvironment for NativeEnvironment {
     ) -> crate::accounts::AccountOperation<String> {
         #[cfg(target_os = "windows")]
         {
-            account_work(move || crate::account_service::verify_uid(&authorization))
+            let path = self.database_path();
+            account_work(move || {
+                crate::account_service::verify_uid(
+                    &authorization,
+                    &crate::account_store::device_id(&path?)?,
+                )
+            })
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -260,7 +270,10 @@ impl LauncherEnvironment for NativeEnvironment {
     fn create_qr(&self) -> crate::accounts::AccountOperation<crate::accounts::QrSession> {
         #[cfg(target_os = "windows")]
         {
-            account_work(crate::account_service::create)
+            let path = self.database_path();
+            account_work(move || {
+                crate::account_service::create(&crate::account_store::device_id(&path?)?)
+            })
         }
         #[cfg(not(target_os = "windows"))]
         {

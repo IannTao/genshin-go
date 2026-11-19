@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 fn database_error(error: &rusqlite::Error) -> String {
     format!("本机 SQLite 操作失败：{error}")
@@ -90,11 +90,39 @@ fn open(path: &Path) -> Result<Connection, String> {
             )
             .map_err(|error| database_error(&error))?;
     }
+    if version < 4 {
+        let device = windows::core::GUID::new().map_err(|_| "无法生成本机设备标识")?;
+        migration
+            .execute_batch(
+                "CREATE TABLE passport_device (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    device_id TEXT NOT NULL
+                );",
+            )
+            .map_err(|error| database_error(&error))?;
+        migration
+            .execute(
+                "INSERT INTO passport_device (singleton, device_id) VALUES (1, ?1)",
+                [format!("{device:?}")],
+            )
+            .map_err(|error| database_error(&error))?;
+    }
     migration
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| database_error(&error))?;
     migration.commit().map_err(|error| database_error(&error))?;
     Ok(db)
+}
+
+/// Reads the device identifier assigned to this local database.
+pub(crate) fn device_id(path: &Path) -> Result<String, String> {
+    open(path)?
+        .query_row(
+            "SELECT device_id FROM passport_device WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(&error))
 }
 
 fn snapshot(db: &Connection) -> rusqlite::Result<Profile> {
@@ -357,6 +385,24 @@ mod tests {
     }
 
     #[test]
+    fn reuses_the_device_id_across_connections_and_account_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let original = device_id(&path)?;
+        let independent = isolated_database()?;
+        assert_ne!(original, device_id(&independent)?);
+        let profile = save(&path, grant("10001", "test-cookie"), "123456789", None)?;
+        let account = profile.account.ok_or("no saved account")?;
+        remove_authorization(&path, &account)?;
+        assert_eq!(device_id(&path)?, original);
+        for database in [path, independent] {
+            fs::remove_file(&database)?;
+            fs::remove_dir(database.parent().ok_or("no directory")?)?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn migrates_uid_spaces_and_preserves_their_separate_history()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = isolated_database()?;
@@ -606,7 +652,7 @@ mod tests {
         assert!(authorization.cookie_header.contains("cookie_token="));
         assert!(authorization.cookie_header.contains("ltuid="));
         assert_eq!(
-            crate::account_service::verify_uid(&authorization)?,
+            crate::account_service::verify_uid(&authorization, &device_id(&path)?)?,
             account.uid
         );
         Ok(())
