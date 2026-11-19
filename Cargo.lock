@@ -2092,6 +2092,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "azure_core",
+ "chrono",
  "env_logger",
  "futures-util",
  "md5",

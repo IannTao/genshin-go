@@ -175,11 +175,18 @@ impl LauncherEnvironment for NativeEnvironment {
         &self,
         account: crate::profile::VerifiedAccount,
         day: u64,
+        allow_submission: bool,
     ) -> crate::community_sign_in::Operation {
         use crate::community_sign_in::Failure;
         let path = self.database_path();
         Box::pin(async move {
-            crate::community_service::sign_in(path.map_err(Failure::Other)?, account, day).await
+            crate::community_service::sign_in(
+                path.map_err(Failure::Other)?,
+                account,
+                day,
+                allow_submission,
+            )
+            .await
         })
     }
 

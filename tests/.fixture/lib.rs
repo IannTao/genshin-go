@@ -1,5 +1,5 @@
 use nsh_app_genshin_go::accounts::{AccountOperation, Authorization, QrSession, QrStatus};
-use nsh_app_genshin_go::community_sign_in::{Clock, Completion, Failure, Operation};
+use nsh_app_genshin_go::community_sign_in::{Clock, Completion, Failure, Operation, SignInResult};
 use nsh_app_genshin_go::game_install::{InstallControl, InstallOperation};
 use nsh_app_genshin_go::launcher::{DirectoryChoice, LauncherEnvironment, launcher};
 use nsh_app_genshin_go::profile::{Profile, VerifiedAccount};
@@ -14,13 +14,21 @@ use std::{
 const CONFIRMED_WITH_NEW_COOKIE: u32 = 7;
 const RENEWED_COOKIE: &str = "fixture-renewed-cookie";
 
+fn claimed(completion: Completion) -> SignInResult {
+    SignInResult {
+        completion,
+        reward_claimed: true,
+        reward_points: Some(30),
+    }
+}
+
 struct Environment {
     profile: RefCell<Profile>,
     revision: Cell<u64>,
     cookie: RefCell<Option<String>>,
     sign_in_day: Signal<u64>,
     suspended_seconds: Signal<u64>,
-    sign_in_reply: Signal<Result<Completion, Failure>>,
+    sign_in_reply: Signal<Result<SignInResult, Failure>>,
     sign_in_attempts: Signal<u32>,
     uid_lookup: Signal<u32>,
     qr_status: Signal<u32>,
@@ -45,7 +53,12 @@ impl LauncherEnvironment for Environment {
             suspended: Duration::from_secs(self.suspended_seconds.get_untracked()),
         })
     }
-    fn community_sign_in(&self, account: VerifiedAccount, day: u64) -> Operation {
+    fn community_sign_in(
+        &self,
+        account: VerifiedAccount,
+        day: u64,
+        allow_submission: bool,
+    ) -> Operation {
         let current = self.profile.borrow().account.clone();
         let current_day = self.sign_in_day.get_untracked();
         let result = self.sign_in_reply.get_untracked();
@@ -54,7 +67,12 @@ impl LauncherEnvironment for Environment {
             nsh_core::element::timer(Duration::from_secs(1)).await;
             assert_eq!(current.as_ref(), Some(&account));
             assert_eq!(day, current_day);
-            result
+            match result {
+                Ok(result) if result.completion == Completion::Signed && !allow_submission => {
+                    Err(Failure::Other("米游社尚未确认签到结果".into()))
+                }
+                result => result,
+            }
         })
     }
     fn check_authorization(&self, account_id: String) -> AccountOperation<bool> {
@@ -272,7 +290,7 @@ pub fn Fixture() -> impl IntoElement {
         cookie: RefCell::new(None),
         sign_in_day: signal(1),
         suspended_seconds: signal(0),
-        sign_in_reply: signal(Ok(Completion::AlreadySigned)),
+        sign_in_reply: signal(Ok(claimed(Completion::AlreadySigned))),
         sign_in_attempts: signal(0),
         uid_lookup: signal(0),
         qr_status: signal(0),
@@ -327,8 +345,24 @@ pub fn Fixture() -> impl IntoElement {
         )
         .child(
             view()
-                .on_press(move || sign_in_reply.set(Ok(Completion::Signed)))
+                .on_press(move || sign_in_reply.set(Ok(claimed(Completion::Signed))))
                 .child(text("模拟当天签到尚未完成")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    sign_in_reply.set(Ok(SignInResult {
+                        completion: Completion::AlreadySigned,
+                        reward_claimed: false,
+                        reward_points: None,
+                    }))
+                })
+                .child(text("模拟签到已完成但奖励未确认")),
+        )
+        .child(
+            view()
+                .on_press(move || sign_in_reply.set(Ok(claimed(Completion::AlreadySigned))))
+                .child(text("模拟签到状态已确认领取")),
         )
         .child(
             view()

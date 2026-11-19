@@ -18,7 +18,9 @@ Use **移除账号** to delete the saved 米游社 authorization and keep the UI
 
 The sole saved 米哈游账号 is the sign-in account. The launcher shows **社区签到** and checks for the day's unfinished community sign-in when opened, at Beijing midnight, and after Windows resumes. Switch UID data spaces independently. The launcher only runs checks while it is open.
 
-Use **重试社区签到** after a failure. If 米游社 requires verification, complete verification or sign-in in the app, then retry. If the launcher asks you to scan again, use **重新扫码** with the same account. Older authorizations may need a fresh scan to supply the separately encrypted community sign-in session. See the [T11 validation record](docs/validation/t11.md).
+The **社区签到奖励日历** shows today's result and results checked during the current session in the past six Beijing dates. It displays the reward amount from the 米游社 task definition when 米游社 confirms delivery. If sign-in succeeds and delivery is still unconfirmed, use **检查奖励领取** to refresh the reward status.
+
+Use **重试社区签到** in the calendar after a failure. If 米游社 requires verification, complete verification or sign-in in the app, then retry. If the launcher asks you to scan again, use **重新扫码** with the same account. Older authorizations may need a fresh scan to supply the separately encrypted community sign-in session. See the [T11 sign-in validation](docs/validation/t11.md) and [T13 calendar validation](docs/validation/t13.md).
 
 ## Windows launcher: existing official mainland-China installation
 

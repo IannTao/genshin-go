@@ -1,5 +1,15 @@
 import { expect, open, test } from "nsh/test";
 
+test("shows the actual reward for today's community sign-in in the calendar", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("社区签到奖励日历");
+  await app.waitFor("1970-01-02 · 待处理");
+  await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  expect(app.texts()).not.toContain("重试社区签到");
+});
+
 test("automatically checks community sign-in for the saved account when reopening", async () => {
   const app = await open(".", { clock: {} });
   expect(app.texts()).toContain("签到请求次数：0");
@@ -26,6 +36,9 @@ test("checks community sign-in again after a new day and a same-day resume", asy
   await app.press("模拟签到网络失败");
   await app.press("模拟签到跨日");
   await app.waitFor("社区签到：失败，无法连接米游社");
+  expect(app.texts()).toContain("1970-01-03 · 失败");
+  expect(app.texts()).toContain("1970-01-02 · 已领取 · 30 米游币");
+  expect(app.texts()).not.toContain("1970-01-03 · 已领取 · 30 米游币");
   await app.press("模拟当天签到尚未完成");
   await app.press("模拟休眠恢复");
   await app.waitFor("社区签到：成功");
@@ -45,14 +58,55 @@ test("bounds community sign-in timeout retries and lets the user retry unfinishe
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitFor("社区签到：待处理");
+  expect(app.texts()).toContain("1970-01-02 · 待处理");
   await app.wait(7000);
   expect(app.texts()).toContain("社区签到：失败，网络超时，请重试");
+  expect(app.texts()).toContain("1970-01-02 · 失败");
   expect(app.texts()).toContain("签到请求次数：3");
   await app.press("模拟当天签到尚未完成");
   await app.press("重试社区签到");
   await app.waitFor("社区签到：成功");
+  expect(app.texts()).toContain("1970-01-02 · 已领取 · 30 米游币");
   expect(app.texts()).toContain("签到请求次数：4");
   expect(app.texts()).not.toContain("重试社区签到");
+});
+
+test("keeps the reward unconfirmed when only community sign-in is confirmed", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("模拟签到已完成但奖励未确认");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("1970-01-02 · 已签到 · 领取待确认");
+  expect(app.texts()).not.toContain("1970-01-02 · 已领取 · 30 米游币");
+  expect(app.texts()).not.toContain("重试社区签到");
+  await app.press("模拟当天签到尚未完成");
+  await app.press("检查奖励领取");
+  await app.waitFor("签到请求次数：2");
+  await app.wait(2000);
+  expect(app.texts()).toContain("1970-01-02 · 已签到 · 领取待确认");
+  await app.press("模拟签到状态已确认领取");
+  await app.press("检查奖励领取");
+  await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  expect(app.texts()).not.toContain("检查奖励领取");
+});
+
+test("does not carry a reward check into the next day's blocked sign-in", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("模拟签到已完成但奖励未确认");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("1970-01-02 · 已签到 · 领取待确认");
+  await app.press("模拟签到需要人工验证");
+  await app.press("检查奖励领取");
+  await app.waitFor("社区签到：失败，请在米游社完成验证或签到后重试");
+
+  await app.press("模拟当天签到尚未完成");
+  await app.press("检查奖励领取");
+  await app.press("模拟签到跨日");
+  await app.waitFor("1970-01-03 · 待处理");
+  await app.wait(4000);
+  expect(app.texts()).toContain("1970-01-02 · 已签到 · 领取待确认");
+  expect(app.texts()).toContain("签到请求次数：2");
 });
 
 test("waits for the user when community sign-in requires verification or a new scan", async () => {

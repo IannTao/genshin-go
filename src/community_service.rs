@@ -1,8 +1,8 @@
 //! Windows client for the `MiYouShe` community sign-in service.
 use crate::{
     account_service::APP_ID,
-    account_store,
-    community_sign_in::{Clock, Completion, Failure},
+    account_store::{self, CommunityGrant},
+    community_sign_in::{Clock, Completion, Failure, SignInResult},
     profile::VerifiedAccount,
 };
 use reqwest::{Client, RequestBuilder, StatusCode, header};
@@ -19,6 +19,8 @@ const HOST: &str = "https://bbs-api.miyoushe.com";
 const SIGN_BODY: &str = r#"{"gids":2}"#;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_REPLY_BYTES: usize = 64 * 1024;
+const SIGN_MISSION_ID: u64 = 58;
+const SIGN_MISSION_KEY: &str = "continuous_sign";
 
 fn unix_seconds() -> Option<u64> {
     SystemTime::now()
@@ -55,11 +57,14 @@ fn transport_error(error: &reqwest::Error) -> Failure {
     }
 }
 
-async fn request(request: RequestBuilder, cookie: &str) -> Result<Value, Failure> {
-    let mut cookie = header::HeaderValue::from_str(cookie).map_err(|_| Failure::Authorization)?;
-    cookie.set_sensitive(true);
+async fn request(mut request: RequestBuilder, cookie: Option<&str>) -> Result<Value, Failure> {
+    if let Some(cookie) = cookie {
+        let mut cookie =
+            header::HeaderValue::from_str(cookie).map_err(|_| Failure::Authorization)?;
+        cookie.set_sensitive(true);
+        request = request.header(header::COOKIE, cookie);
+    }
     let mut reply = request
-        .header(header::COOKIE, cookie)
         .send()
         .await
         .map_err(|error| transport_error(&error))?;
@@ -110,7 +115,13 @@ fn rejected(code: i64) -> Failure {
     Failure::Other(format!("米游社拒绝签到请求（服务代码 {code}）"))
 }
 
-fn already_signed(reply: &Value) -> Result<bool, Failure> {
+#[derive(Default)]
+struct MissionState {
+    signed: bool,
+    claimed: bool,
+}
+
+fn mission_state(reply: &Value) -> Result<MissionState, Failure> {
     let code = reply_code(reply)?;
     if code != 0 {
         return Err(rejected(code));
@@ -118,14 +129,53 @@ fn already_signed(reply: &Value) -> Result<bool, Failure> {
     let states = reply["data"]["states"]
         .as_array()
         .ok_or_else(invalid_reply)?;
-    Ok(states.iter().any(|mission| {
-        (mission["mission_id"].as_u64() == Some(58)
-            || mission["mission_key"].as_str() == Some("continuous_sign"))
-            && (mission["is_get_award"].as_bool() == Some(true)
-                || mission["happened_times"]
-                    .as_u64()
-                    .is_some_and(|count| count > 0))
-    }))
+    let Some(mission) = states.iter().find(|mission| {
+        // The existing state lookup accepts either task identifier.
+        mission["mission_id"].as_u64() == Some(SIGN_MISSION_ID)
+            || mission["mission_key"].as_str() == Some(SIGN_MISSION_KEY)
+    }) else {
+        return Ok(MissionState::default());
+    };
+    let claimed = mission["is_get_award"].as_bool() == Some(true);
+    let signed = claimed
+        || mission["happened_times"]
+            .as_u64()
+            .is_some_and(|count| count > 0);
+    Ok(MissionState { signed, claimed })
+}
+
+async fn fetch_mission_state(client: &Client, web_cookie: &str) -> Result<MissionState, Failure> {
+    let reply = request(
+        client
+            .get(format!(
+                "{HOST}/apihub/wapi/getUserMissionsState?point_sn=myb"
+            ))
+            .header(header::ORIGIN, "https://webstatic.mihoyo.com")
+            .header(header::REFERER, "https://webstatic.mihoyo.com/"),
+        Some(web_cookie),
+    )
+    .await?;
+    mission_state(&reply)
+}
+
+async fn fetch_reward_points(client: &Client) -> Option<u64> {
+    let reply = request(
+        client.get(format!("{HOST}/apihub/wapi/getMissions?point_sn=myb")),
+        None,
+    )
+    .await
+    .ok()?;
+    if reply_code(&reply).ok()? != 0 {
+        return None;
+    }
+    let mission = reply["data"]["missions"]
+        .as_array()?
+        .iter()
+        .find(|mission| {
+            mission["id"].as_u64() == Some(SIGN_MISSION_ID)
+                && mission["mission_key"].as_str() == Some(SIGN_MISSION_KEY)
+        })?;
+    mission["points"].as_u64()
 }
 
 fn completion(reply: &Value) -> Result<Completion, Failure> {
@@ -159,12 +209,13 @@ async fn read_account<T: Send + 'static>(
         .map_err(Failure::Other)
 }
 
-/// Checks the remote task state and submits one sign-in for the verified account when needed.
+/// Checks the remote task state and submits when needed and permitted.
 pub(crate) async fn sign_in(
     path: PathBuf,
     account: VerifiedAccount,
     day: u64,
-) -> Result<Completion, Failure> {
+    allow_submission: bool,
+) -> Result<SignInResult, Failure> {
     let grant_path = path.clone();
     let expected = account.clone();
     let grant = read_account(move || account_store::load_community_grant(&grant_path, &expected))
@@ -176,20 +227,42 @@ pub(crate) async fn sign_in(
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|_| Failure::Other("无法初始化米游社签到".into()))?;
-    let state = request(
-        client
-            .get(format!(
-                "{HOST}/apihub/wapi/getUserMissionsState?point_sn=myb"
-            ))
-            .header(header::ORIGIN, "https://webstatic.mihoyo.com")
-            .header(header::REFERER, "https://webstatic.mihoyo.com/"),
-        &grant.web_cookie,
-    )
-    .await?;
-    if already_signed(&state)? {
-        return Ok(Completion::AlreadySigned);
-    }
-    let cookie = grant.community_cookie.ok_or(Failure::Authorization)?;
+    let state = fetch_mission_state(&client, &grant.web_cookie).await?;
+    let (completion, claimed) = if state.signed {
+        (Completion::AlreadySigned, state.claimed)
+    } else if allow_submission {
+        let completion = submit(&client, path, account, day, &grant).await?;
+        // The submit result confirms sign-in. The task state confirms award delivery.
+        let claimed = fetch_mission_state(&client, &grant.web_cookie)
+            .await
+            .is_ok_and(|state| state.claimed);
+        (completion, claimed)
+    } else {
+        return Err(Failure::Other("米游社尚未确认签到结果".into()));
+    };
+    let reward_points = if claimed {
+        fetch_reward_points(&client).await
+    } else {
+        None
+    };
+    Ok(SignInResult {
+        completion,
+        reward_claimed: claimed,
+        reward_points,
+    })
+}
+
+async fn submit(
+    client: &Client,
+    path: PathBuf,
+    account: VerifiedAccount,
+    day: u64,
+    grant: &CommunityGrant,
+) -> Result<Completion, Failure> {
+    let cookie = grant
+        .community_cookie
+        .as_deref()
+        .ok_or(Failure::Authorization)?;
     if !read_account(move || account_store::is_current_authorization(&path, &account)).await? {
         return Err(Failure::Authorization);
     }
@@ -209,13 +282,13 @@ pub(crate) async fn sign_in(
             .header("x-rpc-app_version", "2.106.2")
             .header("x-rpc-channel", "miyousheluodi")
             .header("x-rpc-verify_key", APP_ID)
-            .header("x-rpc-device_id", grant.device)
+            .header("x-rpc-device_id", &grant.device)
             .header(
                 "DS",
                 dynamic_secret(timestamp, 100_001 + nonce.data1 % 100_000),
             )
             .body(SIGN_BODY),
-        &cookie,
+        Some(cookie),
     )
     .await?;
     completion(&result)
@@ -237,15 +310,29 @@ mod tests {
     fn only_the_community_sign_in_mission_marks_the_day_complete() {
         let reading = json!({"mission_id": 59, "is_get_award": true, "happened_times": 3});
         assert!(matches!(
-            already_signed(&json!({"retcode":0,"data":{"states":[reading]}})),
-            Ok(false)
+            mission_state(&json!({"retcode":0,"data":{"states":[reading]}})),
+            Ok(MissionState {
+                signed: false,
+                claimed: false
+            })
         ));
         let sign_in = json!({"mission_key":"continuous_sign","happened_times":1});
         assert!(matches!(
-            already_signed(&json!({"retcode":0,"data":{"states":[sign_in]}})),
-            Ok(true)
+            mission_state(&json!({"retcode":0,"data":{"states":[sign_in]}})),
+            Ok(MissionState {
+                signed: true,
+                claimed: false
+            })
         ));
-        assert!(already_signed(&json!({"retcode":0,"data":null})).is_err());
+        let claimed = json!({"mission_id":58,"is_get_award":true,"happened_times":1});
+        assert!(matches!(
+            mission_state(&json!({"retcode":0,"data":{"states":[claimed]}})),
+            Ok(MissionState {
+                signed: true,
+                claimed: true
+            })
+        ));
+        assert!(mission_state(&json!({"retcode":0,"data":null})).is_err());
     }
 
     #[test]

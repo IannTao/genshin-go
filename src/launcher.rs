@@ -20,11 +20,12 @@ pub trait LauncherEnvironment {
     fn community_clock(&self) -> Option<crate::community_sign_in::Clock> {
         None
     }
-    /// Checks and completes the saved account's community sign-in on the given day.
+    /// Checks the saved account's community sign-in and submits when needed and permitted.
     fn community_sign_in(
         &self,
         _account: crate::profile::VerifiedAccount,
         _day: u64,
+        _allow_submission: bool,
     ) -> crate::community_sign_in::Operation {
         Box::pin(async {
             Err(crate::community_sign_in::Failure::Other(
