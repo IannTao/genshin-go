@@ -10,6 +10,8 @@ In **UID 数据空间**, enter a game UID and choose **创建 UID 数据空间**
 
 The launcher assigns one device ID to the local database and reuses it for refreshed QR codes, new scans and authorization requests after reopening.
 
+Upgrading from the multi-account version removes its saved authorizations. You can switch between existing UID data spaces before scanning again. To verify the upgrade and a new scan with isolated Windows data, run `./docs/validation/issue-32-windows.ps1 -LiveScan` in PowerShell 7.2 or later.
+
 Use **移除账号** to delete the saved 米游社 authorization and keep the UID spaces and their records. Scanning again verifies the account's game UID and links it to the existing space. To clear local records, open **删除历史记录**, select a UID, and confirm the UID displayed. This keeps the UID space and any saved authorization available.
 
 ## Windows launcher: existing official mainland-China installation

@@ -32,6 +32,15 @@ fn schema_version(db: &Connection) -> Result<u32, String> {
 fn open(path: &Path) -> Result<Connection, String> {
     fs::create_dir_all(path.parent().ok_or("本机数据目录无效")?)
         .map_err(|error| format!("无法创建本机数据目录：{error}"))?;
+    // Multi-account releases stored all grants in separate DPAPI files. Their
+    // absence completes cleanup without a marker or a change to SQLite data.
+    for filename in ["accounts.dpapi", "accounts-passport.dpapi"] {
+        match fs::remove_file(path.with_file_name(filename)) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(format!("无法清除旧版米游社授权（{filename}）：{error}")),
+        }
+    }
     let mut db = Connection::open(path).map_err(|error| database_error(&error))?;
     db.pragma_update(None, "foreign_keys", true)
         .map_err(|error| database_error(&error))?;
@@ -384,6 +393,98 @@ mod tests {
         }
     }
 
+    fn seed_legacy_authorizations(path: &Path, version: u32, count: u32) -> Result<(), String> {
+        let accounts: Vec<_> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "account_id": (10001 + index).to_string(),
+                    "cookie_header": "fixture-legacy-cookie",
+                })
+            })
+            .collect();
+        let mut plaintext = serde_json::to_vec(&serde_json::json!({
+            "version": version,
+            "accounts": accounts,
+        }))
+        .map_err(|error| error.to_string())?;
+        let encrypted = crypt(&mut plaintext, true);
+        plaintext.fill(0);
+        fs::write(path, encrypted?).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn clears_legacy_authorizations_and_restores_a_new_scan_across_restarts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for count in [0, 1, 2] {
+            let path = isolated_database()?;
+            let directory = path.parent().ok_or("no directory")?;
+            fs::create_dir_all(directory)?;
+            let legacy = directory.join("accounts.dpapi");
+            let passport = directory.join("accounts-passport.dpapi");
+            seed_legacy_authorizations(&legacy, 1, count)?;
+            seed_legacy_authorizations(&passport, 2, count)?;
+
+            assert!(load(&path)?.account.is_none());
+            assert!(!legacy.try_exists()?);
+            assert!(!passport.try_exists()?);
+            let saved = save(
+                &path,
+                grant("10001", "fixture-new-cookie"),
+                "123456789",
+                None,
+            )?;
+            for _ in 0..2 {
+                assert!(load(&path)? == saved);
+                assert_eq!(
+                    load_authorization(&path, "10001")?.cookie_header,
+                    "fixture-new-cookie"
+                );
+            }
+            fs::remove_file(&path)?;
+            fs::remove_dir(directory)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn retries_interrupted_cleanup_without_losing_the_new_authorization()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let path = isolated_database()?;
+        let directory = path.parent().ok_or("no directory")?;
+        fs::create_dir_all(directory)?;
+        let legacy = directory.join("accounts.dpapi");
+        let passport = directory.join("accounts-passport.dpapi");
+        seed_legacy_authorizations(&legacy, 1, 1)?;
+        seed_legacy_authorizations(&passport, 2, 2)?;
+        let busy = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&passport)?;
+        assert!(load(&path).is_err());
+        assert!(!legacy.try_exists()?);
+        drop(busy);
+
+        assert!(load(&path)?.account.is_none());
+        let saved = save(
+            &path,
+            grant("10001", "fixture-new-cookie"),
+            "123456789",
+            None,
+        )?;
+        seed_legacy_authorizations(&passport, 2, 2)?;
+        assert!(load(&path)? == saved);
+        assert!(!passport.try_exists()?);
+        assert_eq!(
+            load_authorization(&path, "10001")?.cookie_header,
+            "fixture-new-cookie"
+        );
+        fs::remove_file(&path)?;
+        fs::remove_dir(directory)?;
+        Ok(())
+    }
+
     #[test]
     fn reuses_the_device_id_across_connections_and_account_changes()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -402,12 +503,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn migrates_uid_spaces_and_preserves_their_separate_history()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let path = isolated_database()?;
-        fs::create_dir_all(path.parent().ok_or("no directory")?)?;
-        let prior = Connection::open(&path)?;
+    fn seed_v1_uid_history(path: &Path) -> rusqlite::Result<()> {
+        let prior = Connection::open(path)?;
         prior.execute_batch("
             PRAGMA user_version = 1;
             CREATE TABLE uid_spaces (uid TEXT NOT NULL PRIMARY KEY);
@@ -417,8 +514,17 @@ mod tests {
             INSERT INTO uid_spaces VALUES ('123456789'), ('987654321');
             INSERT INTO active_uid VALUES (1, '123456789');
             INSERT INTO example_history VALUES ('123456789', 'first'), ('987654321', 'second');
-        ")?;
-        drop(prior);
+        ")
+    }
+
+    #[test]
+    fn migrates_uid_spaces_and_preserves_their_separate_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let directory = path.parent().ok_or("no directory")?;
+        fs::create_dir_all(directory)?;
+        seed_v1_uid_history(&path)?;
+        seed_legacy_authorizations(&directory.join("accounts-passport.dpapi"), 2, 2)?;
         let restored = load(&path)?;
         assert_eq!(restored.uids, ["123456789", "987654321"]);
         assert_eq!(restored.active_uid.as_deref(), Some("123456789"));
@@ -444,6 +550,18 @@ mod tests {
         drop(db);
         fs::remove_file(&path)?;
         fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "seeds a new isolated directory for the native Windows upgrade validation"]
+    fn prepare_windows_upgrade_validation() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::var_os("GENSHIN_GO_VALIDATION_LOCALAPPDATA")
+            .ok_or("isolated validation directory missing")?;
+        let directory = std::path::PathBuf::from(root).join("Genshin-Go");
+        fs::create_dir(&directory)?;
+        seed_v1_uid_history(&directory.join("launcher.sqlite3"))?;
+        seed_legacy_authorizations(&directory.join("accounts-passport.dpapi"), 2, 2)?;
         Ok(())
     }
 

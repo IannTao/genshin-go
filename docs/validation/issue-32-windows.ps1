@@ -1,0 +1,46 @@
+#requires -Version 7.2
+param([switch]$LiveScan)
+
+$ErrorActionPreference = 'Stop'
+$validationDirectory = Join-Path ([IO.Path]::GetTempPath()) ('genshin-go-upgrade-' + [guid]::NewGuid())
+$previousLocalAppData = $env:LOCALAPPDATA
+$previousValidationLocalAppData = $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA
+Push-Location (Join-Path $PSScriptRoot '../..')
+try {
+    $null = New-Item -ItemType Directory -Path $validationDirectory
+    $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA = $validationDirectory
+    cargo test --locked --lib account_store::tests::prepare_windows_upgrade_validation -- --ignored --exact
+    if ($LASTEXITCODE -ne 0) { throw "准备旧版数据失败（退出码 $LASTEXITCODE）" }
+
+    $env:LOCALAPPDATA = $validationDirectory
+    $oldAuthorization = Join-Path $validationDirectory 'Genshin-Go/accounts-passport.dpapi'
+    Write-Host "验证目录 $validationDirectory"
+    @'
+await app.setViewport(520, 900);
+await app.waitFor("尚未保存米哈游账号");
+await app.waitFor("扫码添加米哈游账号");
+await app.waitFor("当前游戏 UID：123456789");
+await app.press("切换至 UID：987654321");
+await app.waitFor("当前游戏 UID：987654321");
+await app.waitFor("尚未保存米哈游账号");
+'@ | nsh test nsh.json --target windows
+    if ($LASTEXITCODE -ne 0) { throw "原生窗口升级验证失败（退出码 $LASTEXITCODE）" }
+    if (Test-Path -LiteralPath $oldAuthorization) { throw '旧版授权文件仍存在' }
+
+    if ($LiveScan) {
+        Get-Content (Join-Path $PSScriptRoot 't02-windows-save.js') -Raw |
+            nsh test nsh.json --target windows
+        if ($LASTEXITCODE -ne 0) { throw "原生窗口扫码验证失败（退出码 $LASTEXITCODE）" }
+
+        $restore = Get-Content (Join-Path $PSScriptRoot 't02-windows-restore.js') -Raw
+        $restore += "`nawait app.waitFor(`"当前游戏 UID：987654321`");"
+        foreach ($restart in 1..2) {
+            $restore | nsh test nsh.json --target windows
+            if ($LASTEXITCODE -ne 0) { throw "第 $restart 次重开恢复失败（退出码 $LASTEXITCODE）" }
+        }
+    }
+} finally {
+    $env:LOCALAPPDATA = $previousLocalAppData
+    $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA = $previousValidationLocalAppData
+    Pop-Location
+}
