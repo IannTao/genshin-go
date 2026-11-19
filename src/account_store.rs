@@ -266,7 +266,7 @@ pub(crate) fn save(
         .as_ref()
         != expected
     {
-        return Err("本机授权已在另一启动器中更改，请重新打开后重试".into());
+        return Err("本机授权已在另一启动器中更改".into());
     }
     write
         .execute(
@@ -442,6 +442,50 @@ mod tests {
             "first"
         );
         drop(db);
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_first_saves_restore_only_the_winning_authorization()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let starting_line = std::sync::Barrier::new(2);
+        let [first, second] = std::thread::scope(|scope| {
+            let first = scope.spawn(|| {
+                starting_line.wait();
+                save(&path, grant("10001", "first-cookie"), "123456789", None)
+            });
+            let second = scope.spawn(|| {
+                starting_line.wait();
+                save(&path, grant("10002", "second-cookie"), "987654321", None)
+            });
+            [first.join(), second.join()]
+        });
+        let (saved, rejected, cookie, error) = match (
+            first.map_err(|_| "first launcher panicked")?,
+            second.map_err(|_| "second launcher panicked")?,
+        ) {
+            (Ok(saved), Err(error)) => (saved, "10002", "first-cookie", error),
+            (Err(error), Ok(saved)) => (saved, "10001", "second-cookie", error),
+            (Err(first), Err(second)) => {
+                return Err(
+                    format!("neither launcher saved authorization: {first}; {second}").into(),
+                );
+            }
+            (Ok(_), Ok(_)) => return Err("both launchers saved authorization".into()),
+        };
+        assert_eq!(error, "本机授权已在另一启动器中更改");
+        let restored = load(&path)?;
+        assert!(restored == saved);
+        let account = restored.account.ok_or("no restored account")?;
+        assert_eq!(restored.uids, [account.uid]);
+        assert_eq!(
+            load_authorization(&path, &account.account_id)?.cookie_header,
+            cookie
+        );
+        assert!(load_authorization(&path, rejected).is_err());
         fs::remove_file(&path)?;
         fs::remove_dir(path.parent().ok_or("no directory")?)?;
         Ok(())

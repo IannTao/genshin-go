@@ -1,5 +1,20 @@
 import { expect, open, test } from "nsh/test";
 
+test("reports a competing first save and displays the account that won", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟另一启动器先保存授权");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("保存米游社授权失败：本机授权已在另一启动器中更改"));
+  expect(app.texts()).toContain("米哈游账号：10002");
+  expect(app.texts()).toContain("已验证游戏 UID：987654321");
+  expect(app.texts()).toContain("重新扫码：10002");
+  expect(app.texts()).not.toContain("米游社授权已保存");
+  expect(app.texts()).not.toContain("扫码添加米哈游账号");
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("米哈游账号：10002");
+});
+
 test("creates and switches independent game UID spaces without signing in", async () => {
   const app = await open(".");
   await app.type("game-uid", "123456789");
@@ -38,7 +53,7 @@ test("links only the verified UID without changing the selected manual space", a
   expect(app.texts()).toContain("切换至 UID：123456789");
 });
 
-test("discards a first scan when no game UID can be verified", async () => {
+test("retries a failed first scan and restores only the verified account's controls", async () => {
   const app = await open(".", { clock: {} });
   await app.type("game-uid", "123456789");
   await app.press("创建 UID 数据空间");
@@ -49,6 +64,20 @@ test("discards a first scan when no game UID can be verified", async () => {
   await app.press("重新打开启动器");
   expect(app.texts()).toContain("尚未保存米哈游账号");
   expect(app.texts()).toContain("当前游戏 UID：123456789");
+
+  await app.press("模拟查到唯一游戏 UID");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("米哈游账号：10001");
+  expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  expect(app.texts()).toContain("检查授权：10001");
+  expect(app.texts()).toContain("重新扫码：10001");
+  expect(app.texts()).toContain("移除账号：10001");
+  expect(app.texts()).not.toContain("扫码添加米哈游账号");
+  expect(app.texts()).not.toContain("刷新二维码");
+  expect(app.texts()).not.toContain("取消扫码");
 });
 
 test("removes authorization and relinks the same UID after a new verified scan", async () => {

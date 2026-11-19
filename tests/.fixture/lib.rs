@@ -61,7 +61,7 @@ impl LauncherEnvironment for Environment {
         expected: Option<&VerifiedAccount>,
     ) -> Result<Profile, String> {
         if self.profile.borrow().account.as_ref() != expected {
-            return Err("授权已更改".into());
+            return Err("本机授权已在另一启动器中更改".into());
         }
         let mut profile = self.profile.borrow_mut();
         if !profile.uids.iter().any(|saved| saved == uid) {
@@ -184,6 +184,7 @@ pub fn Fixture() -> impl IntoElement {
         launched: signal(String::new()),
     });
     let remove_environment = environment.clone();
+    let other_launcher = environment.clone();
     let qr_status = environment.qr_status;
     let uid_lookup = environment.uid_lookup;
     let slow_qr_creation = environment.slow_qr_creation;
@@ -198,6 +199,11 @@ pub fn Fixture() -> impl IntoElement {
             view()
                 .on_press(move || uid_lookup.set(1))
                 .child(text("模拟查不到游戏 UID")),
+        )
+        .child(
+            view()
+                .on_press(move || uid_lookup.set(0))
+                .child(text("模拟查到唯一游戏 UID")),
         )
         .child(
             view()
@@ -243,6 +249,24 @@ pub fn Fixture() -> impl IntoElement {
             view()
                 .on_press(move || next_account.set(2))
                 .child(text("模拟另一米哈游账号")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    assert!(
+                        other_launcher
+                            .save_authorization(
+                                Authorization {
+                                    account_id: "10002".into(),
+                                    cookie_header: "fixture-cookie".into(),
+                                },
+                                "987654321",
+                                None,
+                            )
+                            .is_ok()
+                    );
+                })
+                .child(text("模拟另一启动器先保存授权")),
         )
         .child(
             view()

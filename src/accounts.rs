@@ -63,6 +63,7 @@ enum Scan {
     Creating,
     Ready(String),
     Verifying,
+    Retry,
 }
 
 fn qr_image(url: &str) -> Result<String, String> {
@@ -141,10 +142,13 @@ pub(crate) fn accounts(
                     Err(error) => message.set(format!("移除账号失败：{error}")),
                 }))
                 .child(button(format!("检查授权：{id}"), move || {
-                    if checking.get_untracked() || !matches!(scan.get_untracked(), Scan::Idle) {
+                    if checking.get_untracked()
+                        || !matches!(scan.get_untracked(), Scan::Idle | Scan::Retry)
+                    {
                         return;
                     }
                     checking.set(true);
+                    scan.set(Scan::Idle);
                     let current = generation.get_untracked();
                     let environment = environment.clone();
                     let id = id.clone();
@@ -166,14 +170,22 @@ pub(crate) fn accounts(
         .child(text(move || message.get()))
         .child(dynamic(move || match scan.get() {
             Scan::Ready(url) => Some(qr_element(&url)),
-            Scan::Idle | Scan::Creating | Scan::Verifying => None,
+            Scan::Idle | Scan::Creating | Scan::Verifying | Scan::Retry => None,
         }))
-        .child(button("刷新二维码", move || refresh()))
-        .child(button("取消扫码", move || {
-            generation.update(|g| *g += 1);
-            scan.set(Scan::Idle);
-            message.set("已取消扫码".into());
-        }))
+        .child(when(
+            move || !matches!(scan.get(), Scan::Idle),
+            move || {
+                let refresh = refresh.clone();
+                view()
+                    .gap_2()
+                    .child(button("刷新二维码", move || refresh()))
+                    .child(button("取消扫码", move || {
+                        generation.update(|g| *g += 1);
+                        scan.set(Scan::Idle);
+                        message.set("已取消扫码".into());
+                    }))
+            },
+        ))
 }
 
 fn start_authorization(
@@ -224,19 +236,33 @@ fn start_authorization(
                             if generation.get_untracked() != current {
                                 return;
                             }
-                            match result.and_then(|uid| {
-                                environment.save_authorization(
-                                    authorization,
-                                    &uid,
-                                    expected_account.as_ref(),
-                                )
-                            }) {
+                            scan.set(Scan::Idle);
+                            let uid = match result {
+                                Ok(uid) => uid,
+                                Err(error) => {
+                                    message.set(error);
+                                    break;
+                                }
+                            };
+                            match environment.save_authorization(
+                                authorization,
+                                &uid,
+                                expected_account.as_ref(),
+                            ) {
                                 Ok(state) => {
                                     profile.set(state);
                                     message.set("米游社授权已保存".into());
                                 }
-                                Err(error) => message.set(error),
+                                Err(error) => {
+                                    let mut status = format!("保存米游社授权失败：{error}");
+                                    match environment.load_profile() {
+                                        Ok(state) => profile.set(state),
+                                        Err(_) => status.push_str("。请重新打开启动器"),
+                                    }
+                                    message.set(status);
+                                }
                             }
+                            break;
                         }
                         Ok(QrStatus::Expired) => {
                             message.set("二维码已过期，请刷新二维码".into());
@@ -244,12 +270,12 @@ fn start_authorization(
                         Ok(QrStatus::Cancelled) => message.set("已取消扫码".into()),
                         Err(error) => message.set(error),
                     }
-                    scan.set(Scan::Idle);
+                    scan.set(Scan::Retry);
                     break;
                 }
             }
             Err(error) => {
-                scan.set(Scan::Idle);
+                scan.set(Scan::Retry);
                 message.set(error);
             }
         }
