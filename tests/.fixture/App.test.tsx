@@ -51,6 +51,61 @@ test("discards a first scan when no game UID can be verified", async () => {
   expect(app.texts()).toContain("当前游戏 UID：123456789");
 });
 
+test("removes authorization and relinks the same UID after a new verified scan", async () => {
+  const app = await open(".", { clock: {} });
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+
+  await app.press("重新扫码：10001");
+  await app.press("模拟扫码确认");
+  await app.press("移除账号：10001");
+  await app.wait(4000);
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("尚未保存米哈游账号");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  expect(app.texts()).toContain("切换至 UID：123456789");
+
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("米哈游账号：10001");
+  expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  expect(app.texts().filter(t => t === "切换至 UID：123456789").length).toBe(1);
+});
+
+test("shows the UID scope before confirming history deletion", async () => {
+  const app = await open(".", { clock: {} });
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+
+  await app.press("删除历史记录");
+  expect(app.texts()).toContain("选择 UID：123456789");
+  expect(app.texts()).toContain("选择 UID：987654321");
+  await app.press("选择 UID：987654321");
+  expect(app.texts()).toContain("本次删除涉及的 UID：987654321");
+  expect(app.texts()).not.toContain("本次删除涉及的 UID：123456789");
+  await app.press("取消删除历史记录");
+  expect(app.texts()).not.toContain("已清除 UID 987654321 的本机历史记录");
+  expect(app.texts()).not.toContain("确认删除 UID：987654321");
+
+  await app.press("选择 UID：123456789");
+  expect(app.texts()).toContain("本次删除涉及的 UID：123456789");
+  await app.press("确认删除 UID：123456789");
+  expect(app.texts()).toContain("已清除 UID 123456789 的本机历史记录");
+  await app.press("重新打开启动器");
+  expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  expect(app.texts()).toContain("切换至 UID：123456789");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+});
+
 test("shows scanned and expired states and refreshes an expired QR", async () => {
   const app = await open(".");
   await app.press("扫码添加米哈游账号");

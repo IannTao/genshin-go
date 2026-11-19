@@ -11,6 +11,8 @@ pub struct VerifiedAccount {
     pub account_id: String,
     /// Identifies the game character verified for that account.
     pub uid: String,
+    /// Identifies the saved authorization used for concurrent changes.
+    pub revision: String,
 }
 
 /// Describes the locally available UID spaces and current authorization.
@@ -60,6 +62,7 @@ fn spaces(
     let input = signal(String::new());
     let message = signal(load_error.unwrap_or_default());
     let create = environment.clone();
+    let switch = environment.clone();
     view()
         .gap_2()
         .child(text("UID 数据空间"))
@@ -76,7 +79,7 @@ fn spaces(
                 .into_iter()
                 .filter(|uid| Some(uid) != state.active_uid.as_ref())
                 .map(|uid| {
-                    let environment = environment.clone();
+                    let environment = switch.clone();
                     button(format!("切换至 UID：{uid}"), move || match environment
                         .select_uid(&uid, false)
                     {
@@ -111,6 +114,84 @@ fn spaces(
                     message.set(String::new());
                 }
                 Err(error) => message.set(error),
+            }
+        }))
+        .child(text(move || message.get()))
+        .child(history_controls(environment, profile))
+}
+
+#[derive(Clone, PartialEq)]
+enum HistoryDeletion {
+    Closed,
+    Choosing,
+    Confirming(String),
+}
+
+fn history_controls(
+    environment: Rc<dyn LauncherEnvironment>,
+    profile: Signal<Profile>,
+) -> impl IntoElement {
+    let deletion = signal(HistoryDeletion::Closed);
+    let message = signal(String::new());
+    view()
+        .gap_2()
+        .child(dynamic(move || {
+            let uids = profile.get().uids;
+            match deletion.get() {
+                HistoryDeletion::Closed if uids.is_empty() => None,
+                HistoryDeletion::Closed => Some(
+                    button("删除历史记录", move || {
+                        message.set(String::new());
+                        deletion.set(HistoryDeletion::Choosing);
+                    })
+                    .into_element(),
+                ),
+                HistoryDeletion::Choosing => Some(
+                    view()
+                        .gap_2()
+                        .child(text("选择要删除历史记录的 UID"))
+                        .child(
+                            uids.into_iter()
+                                .map(|uid| {
+                                    button(format!("选择 UID：{uid}"), move || {
+                                        message.set(String::new());
+                                        deletion.set(HistoryDeletion::Confirming(uid.clone()));
+                                    })
+                                    .into_element()
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .child(button("关闭历史记录删除", move || {
+                            deletion.set(HistoryDeletion::Closed);
+                        }))
+                        .into_element(),
+                ),
+                HistoryDeletion::Confirming(uid) => {
+                    let environment = environment.clone();
+                    Some(
+                        view()
+                            .gap_2()
+                            .child(text(format!("本次删除涉及的 UID：{uid}")))
+                            .child(text(
+                                "此操作将清除该 UID 的本机历史记录，保留数据空间和授权。",
+                            ))
+                            .child(button(format!("确认删除 UID：{uid}"), move || {
+                                match environment.delete_uid_history(&uid) {
+                                    Ok(state) => {
+                                        profile.set(state);
+                                        deletion.set(HistoryDeletion::Closed);
+                                        message.set(format!("已清除 UID {uid} 的本机历史记录"));
+                                    }
+                                    Err(error) => message.set(format!("删除历史记录失败：{error}")),
+                                }
+                            }))
+                            .child(button("取消删除历史记录", move || {
+                                message.set(String::new());
+                                deletion.set(HistoryDeletion::Choosing);
+                            }))
+                            .into_element(),
+                    )
+                }
             }
         }))
         .child(text(move || message.get()))

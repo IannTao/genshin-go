@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 fn database_error(error: &rusqlite::Error) -> String {
     format!("本机 SQLite 操作失败：{error}")
@@ -34,6 +34,8 @@ fn open(path: &Path) -> Result<Connection, String> {
         .map_err(|error| format!("无法创建本机数据目录：{error}"))?;
     let mut db = Connection::open(path).map_err(|error| database_error(&error))?;
     db.pragma_update(None, "foreign_keys", true)
+        .map_err(|error| database_error(&error))?;
+    db.pragma_update(None, "secure_delete", true)
         .map_err(|error| database_error(&error))?;
     if schema_version(&db)? == SCHEMA_VERSION {
         return Ok(db);
@@ -68,10 +70,29 @@ fn open(path: &Path) -> Result<Connection, String> {
         ",
             )
             .map_err(|error| database_error(&error))?;
+    }
+    if version < 3 {
+        // UID-owned business tables reference uid_history(uid) ON DELETE CASCADE.
+        // Account authorization and the current selection reference uid_spaces.
         migration
-            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .execute_batch(
+                "
+            ALTER TABLE account_authorization ADD COLUMN revision TEXT NOT NULL DEFAULT '';
+            UPDATE account_authorization SET revision = lower(hex(randomblob(16)));
+            CREATE TABLE uid_history (
+                uid TEXT NOT NULL PRIMARY KEY REFERENCES uid_spaces(uid)
+            );
+            INSERT INTO uid_history (uid) SELECT uid FROM uid_spaces;
+            CREATE TRIGGER initialize_uid_history AFTER INSERT ON uid_spaces BEGIN
+                INSERT INTO uid_history (uid) VALUES (NEW.uid);
+            END;
+        ",
+            )
             .map_err(|error| database_error(&error))?;
     }
+    migration
+        .pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(|error| database_error(&error))?;
     migration.commit().map_err(|error| database_error(&error))?;
     Ok(db)
 }
@@ -97,12 +118,13 @@ fn snapshot(db: &Connection) -> rusqlite::Result<Profile> {
 
 fn current_account(db: &Connection) -> rusqlite::Result<Option<VerifiedAccount>> {
     db.query_row(
-        "SELECT account_id, uid FROM account_authorization WHERE singleton = 1",
+        "SELECT account_id, uid, revision FROM account_authorization WHERE singleton = 1",
         [],
         |row| {
             Ok(VerifiedAccount {
                 account_id: row.get(0)?,
                 uid: row.get(1)?,
+                revision: row.get(2)?,
             })
         },
     )
@@ -168,6 +190,27 @@ pub(crate) fn load_authorization(path: &Path, account_id: &str) -> Result<Author
     Ok(authorization)
 }
 
+/// Clears the business records for one UID and keeps its history available for future writes.
+pub(crate) fn delete_uid_history(path: &Path, uid: &str) -> Result<Profile, String> {
+    validate_uid(uid)?;
+    let mut db = open(path)?;
+    let write = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| database_error(&error))?;
+    let deleted = write
+        .execute("DELETE FROM uid_history WHERE uid = ?1", [uid])
+        .map_err(|error| database_error(&error))?;
+    if deleted == 0 {
+        return Err("该 UID 数据空间不存在".into());
+    }
+    write
+        .execute("INSERT INTO uid_history (uid) VALUES (?1)", [uid])
+        .map_err(|error| database_error(&error))?;
+    let state = snapshot(&write).map_err(|error| database_error(&error))?;
+    write.commit().map_err(|error| database_error(&error))?;
+    Ok(state)
+}
+
 /// Atomically saves one verified account and creates its UID space if needed.
 pub(crate) fn save(
     path: &Path,
@@ -212,13 +255,38 @@ pub(crate) fn save(
     write
         .execute(
             "
-        INSERT INTO account_authorization (singleton, account_id, uid, protected_cookie)
-        VALUES (1, ?1, ?2, ?3)
-        ON CONFLICT(singleton) DO UPDATE SET protected_cookie = excluded.protected_cookie
+        INSERT INTO account_authorization (singleton, account_id, uid, protected_cookie, revision)
+        VALUES (1, ?1, ?2, ?3, lower(hex(randomblob(16))))
+        ON CONFLICT(singleton) DO UPDATE SET
+            protected_cookie = excluded.protected_cookie, revision = excluded.revision
     ",
             params![authorization.account_id, uid, encrypted],
         )
         .map_err(|error| database_error(&error))?;
+    let state = snapshot(&write).map_err(|error| database_error(&error))?;
+    write.commit().map_err(|error| database_error(&error))?;
+    Ok(state)
+}
+
+/// Deletes the matching protected authorization without changing any UID data.
+pub(crate) fn remove_authorization(
+    path: &Path,
+    account: &VerifiedAccount,
+) -> Result<Profile, String> {
+    let mut db = open(path)?;
+    let write = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| database_error(&error))?;
+    let deleted = write
+        .execute(
+            "DELETE FROM account_authorization
+             WHERE singleton = 1 AND account_id = ?1 AND uid = ?2 AND revision = ?3",
+            params![account.account_id, account.uid, account.revision],
+        )
+        .map_err(|error| database_error(&error))?;
+    if deleted == 0 {
+        return Err("本机授权已更改，请重新打开启动器后重试".into());
+    }
     let state = snapshot(&write).map_err(|error| database_error(&error))?;
     write.commit().map_err(|error| database_error(&error))?;
     Ok(state)
@@ -393,6 +461,130 @@ mod tests {
                 .windows(b"test-secret".len())
                 .any(|bytes| bytes == b"test-secret")
         );
+        drop(db);
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
+    }
+
+    fn seed_history(db: &Connection) -> rusqlite::Result<()> {
+        db.execute_batch(
+            "CREATE TABLE example_history (
+                uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
+                entry TEXT NOT NULL
+            );
+            INSERT INTO example_history VALUES ('123456789', 'first'), ('987654321', 'second');",
+        )
+    }
+
+    #[test]
+    fn removing_and_readding_authorization_leaves_each_history_intact()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        select_uid(&path, "987654321", true)?;
+        let state = save(
+            &path,
+            grant("10001", "test-original-cookie"),
+            "123456789",
+            None,
+        )?;
+        let account = state.account.ok_or("missing verified account")?;
+        let db = open(&path)?;
+        seed_history(&db)?;
+        let encrypted: Vec<u8> = db.query_row(
+            "SELECT protected_cookie FROM account_authorization",
+            [],
+            |row| row.get(0),
+        )?;
+        let other_account = VerifiedAccount {
+            account_id: "10002".into(),
+            ..account.clone()
+        };
+        assert!(remove_authorization(&path, &other_account).is_err());
+        let removed = remove_authorization(&path, &account)?;
+        assert!(removed.account.is_none());
+        assert_eq!(removed.uids, ["123456789", "987654321"]);
+        assert_eq!(removed.active_uid.as_deref(), Some("987654321"));
+        assert!(load_authorization(&path, &account.account_id).is_err());
+        assert!(
+            !fs::read(&path)?
+                .windows(encrypted.len())
+                .any(|bytes| bytes == encrypted)
+        );
+
+        let added = save(&path, grant("10001", "test-new-cookie"), "123456789", None)?;
+        let restored = added.account.ok_or("missing restored account")?;
+        assert_eq!(restored.account_id, account.account_id);
+        assert_eq!(restored.uid, account.uid);
+        assert!(
+            save(
+                &path,
+                grant("10001", "test-stale-cookie"),
+                "123456789",
+                Some(&account),
+            )
+            .is_err()
+        );
+        assert!(remove_authorization(&path, &account).is_err());
+        assert_eq!(
+            load_authorization(&path, "10001")?.cookie_header,
+            "test-new-cookie"
+        );
+        assert_eq!(added.uids, removed.uids);
+        assert_eq!(added.active_uid, removed.active_uid);
+        assert_eq!(
+            db.query_row(
+                "SELECT group_concat(entry, ',' ORDER BY uid) FROM example_history",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            "first,second"
+        );
+        drop(db);
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn clearing_one_history_preserves_other_records_and_the_saved_account()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        select_uid(&path, "987654321", true)?;
+        let before = save(&path, grant("10001", "test-cookie"), "123456789", None)?;
+        let db = open(&path)?;
+        seed_history(&db)?;
+        db.execute_batch(
+            "CREATE TRIGGER fail_history_reset BEFORE INSERT ON uid_history
+                BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;",
+        )?;
+        let history = || {
+            db.query_row(
+                "SELECT group_concat(entry, ',' ORDER BY uid) FROM example_history",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+        };
+        assert!(delete_uid_history(&path, "123456789").is_err());
+        assert_eq!(history()?, "first,second");
+        db.execute_batch("DROP TRIGGER fail_history_reset;")?;
+        assert!(delete_uid_history(&path, "555555555").is_err());
+        assert!(delete_uid_history(&path, "invalid").is_err());
+        assert_eq!(history()?, "first,second");
+
+        let after = delete_uid_history(&path, "123456789")?;
+        assert!(after == before);
+        assert_eq!(history()?, "second");
+        assert_eq!(
+            load_authorization(&path, "10001")?.cookie_header,
+            "test-cookie"
+        );
+        db.execute(
+            "INSERT INTO example_history VALUES ('123456789', 'new')",
+            [],
+        )?;
+        select_uid(&path, "123456789", true)?;
+        assert_eq!(history()?, "new,second");
         drop(db);
         fs::remove_file(&path)?;
         fs::remove_dir(path.parent().ok_or("no directory")?)?;

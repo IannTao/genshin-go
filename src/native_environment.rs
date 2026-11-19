@@ -202,6 +202,17 @@ impl LauncherEnvironment for NativeEnvironment {
             Err("本期仅支持在 Windows 保存 UID 数据空间".into())
         }
     }
+    fn delete_uid_history(&self, uid: &str) -> Result<crate::profile::Profile, String> {
+        #[cfg(target_os = "windows")]
+        {
+            crate::account_store::delete_uid_history(&self.database_path()?, uid)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = uid;
+            Err("本期仅支持在 Windows 删除 UID 历史记录".into())
+        }
+    }
     fn verify_uid(
         &self,
         authorization: crate::accounts::Authorization,
@@ -230,6 +241,20 @@ impl LauncherEnvironment for NativeEnvironment {
         {
             let _ = (authorization, uid, expected);
             Err("本期仅支持 Windows 凭据保护".into())
+        }
+    }
+    fn remove_authorization(
+        &self,
+        account: &crate::profile::VerifiedAccount,
+    ) -> Result<crate::profile::Profile, String> {
+        #[cfg(target_os = "windows")]
+        {
+            crate::account_store::remove_authorization(&self.database_path()?, account)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = account;
+            Err("本期仅支持在 Windows 移除米游社授权".into())
         }
     }
     fn create_qr(&self) -> crate::accounts::AccountOperation<crate::accounts::QrSession> {

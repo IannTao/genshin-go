@@ -8,6 +8,8 @@ Use **扫码添加米哈游账号** to create a new QR code and confirm it in �
 
 In **UID 数据空间**, enter a game UID and choose **创建 UID 数据空间**. You can create and switch spaces without signing in. The launcher restores the selected space on reopening. Scan authorization associates only the game UID verified by 米游社, while keeping any existing space selection. See the [T04 validation record](docs/validation/t04.md).
 
+Use **移除账号** to delete the saved 米游社 authorization and keep the UID spaces and their records. Scanning again verifies the account's game UID and links it to the existing space. To clear local records, open **删除历史记录**, select a UID, and confirm the UID displayed. This keeps the UID space and any saved authorization available.
+
 ## Windows launcher: existing official mainland-China installation
 
 The Rust root discovers existing installations from the current-user and machine

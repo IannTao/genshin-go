@@ -121,13 +121,25 @@ pub(crate) fn accounts(
                     .child(button("扫码添加米哈游账号", move || start()))
                     .into_element();
             };
-            let id = account.account_id;
+            let id = account.account_id.clone();
             let environment = check_environment.clone();
+            let remove = environment.clone();
             view()
                 .gap_2()
                 .child(text(format!("米哈游账号：{id}")))
                 .child(text(format!("已验证游戏 UID：{}", account.uid)))
                 .child(button(format!("重新扫码：{id}"), move || start()))
+                .child(button(format!("移除账号：{id}"), move || match remove
+                    .remove_authorization(&account)
+                {
+                    Ok(state) => {
+                        generation.update(|g| *g += 1);
+                        scan.set(Scan::Idle);
+                        profile.set(state);
+                        message.set("已移除米游社授权，已保留 UID 数据".into());
+                    }
+                    Err(error) => message.set(format!("移除账号失败：{error}")),
+                }))
                 .child(button(format!("检查授权：{id}"), move || {
                     if checking.get_untracked() || !matches!(scan.get_untracked(), Scan::Idle) {
                         return;

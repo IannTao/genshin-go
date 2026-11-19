@@ -28,6 +28,8 @@ pub trait LauncherEnvironment {
     fn load_profile(&self) -> Result<crate::profile::Profile, String>;
     /// Selects a UID space, creating it if requested.
     fn select_uid(&self, uid: &str, create: bool) -> Result<crate::profile::Profile, String>;
+    /// Clears the local business records of one UID while preserving its data space.
+    fn delete_uid_history(&self, uid: &str) -> Result<crate::profile::Profile, String>;
     /// Resolves the unique game UID associated with the scanned authorization.
     fn verify_uid(
         &self,
@@ -39,6 +41,11 @@ pub trait LauncherEnvironment {
         authorization: crate::accounts::Authorization,
         uid: &str,
         expected: Option<&crate::profile::VerifiedAccount>,
+    ) -> Result<crate::profile::Profile, String>;
+    /// Removes the matching saved authorization and preserves all UID data.
+    fn remove_authorization(
+        &self,
+        account: &crate::profile::VerifiedAccount,
     ) -> Result<crate::profile::Profile, String>;
     /// Discovers supported game installations.
     fn discover(&self) -> Result<Vec<PathBuf>, String>;

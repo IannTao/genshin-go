@@ -3,13 +3,14 @@ use nsh_app_genshin_go::launcher::{DirectoryChoice, LauncherEnvironment, launche
 use nsh_app_genshin_go::profile::{Profile, VerifiedAccount};
 use nsh_core::prelude::*;
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
 };
 
 struct Environment {
     profile: RefCell<Profile>,
+    revision: Cell<u64>,
     uid_lookup: Signal<u32>,
     qr_status: Signal<u32>,
     slow_qr_creation: Signal<bool>,
@@ -36,6 +37,13 @@ impl LauncherEnvironment for Environment {
         profile.active_uid = Some(uid.into());
         Ok(profile.clone())
     }
+    fn delete_uid_history(&self, uid: &str) -> Result<Profile, String> {
+        let profile = self.profile.borrow();
+        if !profile.uids.iter().any(|saved| saved == uid) {
+            return Err("该 UID 数据空间不存在".into());
+        }
+        Ok(profile.clone())
+    }
     fn verify_uid(&self, _authorization: Authorization) -> AccountOperation<String> {
         let lookup = self.uid_lookup.get_untracked();
         Box::pin(async move {
@@ -60,10 +68,21 @@ impl LauncherEnvironment for Environment {
             profile.uids.push(uid.into());
         }
         profile.active_uid.get_or_insert_with(|| uid.into());
+        let revision = self.revision.get() + 1;
+        self.revision.set(revision);
         profile.account = Some(VerifiedAccount {
             account_id: authorization.account_id,
             uid: uid.into(),
+            revision: revision.to_string(),
         });
+        Ok(profile.clone())
+    }
+    fn remove_authorization(&self, account: &VerifiedAccount) -> Result<Profile, String> {
+        let mut profile = self.profile.borrow_mut();
+        if profile.account.as_ref() != Some(account) {
+            return Err("授权已更改".into());
+        }
+        profile.account = None;
         Ok(profile.clone())
     }
     fn poll_qr(&self, _qr: QrSession) -> AccountOperation<QrStatus> {
@@ -149,6 +168,7 @@ fn native(registry: &mut Registry) {
 pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
         profile: RefCell::new(Profile::default()),
+        revision: Cell::new(0),
         uid_lookup: signal(0),
         qr_status: signal(0),
         slow_qr_creation: signal(false),
