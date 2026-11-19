@@ -1,20 +1,24 @@
 #requires -Version 7.2
-param([switch]$LiveScan)
+param(
+    [switch]$LiveScan,
+    [switch]$KeepData
+)
 
 $ErrorActionPreference = 'Stop'
-$validationDirectory = Join-Path ([IO.Path]::GetTempPath()) ('genshin-go-upgrade-' + [guid]::NewGuid())
+$tempRoot = [IO.Path]::TrimEndingDirectorySeparator((Get-Item -LiteralPath ([IO.Path]::GetTempPath())).FullName)
+$validationDirectory = Join-Path $tempRoot ('genshin-go-upgrade-' + [guid]::NewGuid())
 $previousLocalAppData = $env:LOCALAPPDATA
 $previousValidationLocalAppData = $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA
 Push-Location (Join-Path $PSScriptRoot '../..')
 try {
     $null = New-Item -ItemType Directory -Path $validationDirectory
+    Write-Host "验证目录 $validationDirectory"
     $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA = $validationDirectory
     cargo test --locked --lib account_store::tests::prepare_windows_upgrade_validation -- --ignored --exact
     if ($LASTEXITCODE -ne 0) { throw "准备旧版数据失败（退出码 $LASTEXITCODE）" }
 
     $env:LOCALAPPDATA = $validationDirectory
     $oldAuthorization = Join-Path $validationDirectory 'Genshin-Go/accounts-passport.dpapi'
-    Write-Host "验证目录 $validationDirectory"
     @'
 await app.setViewport(520, 900);
 await app.waitFor("尚未保存米哈游账号");
@@ -43,4 +47,16 @@ await app.waitFor("尚未保存米哈游账号");
     $env:LOCALAPPDATA = $previousLocalAppData
     $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA = $previousValidationLocalAppData
     Pop-Location
+}
+
+if (-not $KeepData) {
+    $createdDirectory = Get-Item -LiteralPath $validationDirectory -Force
+    if (-not $createdDirectory.PSIsContainer -or
+        $createdDirectory.FullName -ne $validationDirectory -or
+        $createdDirectory.Parent.FullName -ne $tempRoot -or
+        ($createdDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "无法确认验证目录位于临时目录下：$validationDirectory"
+    }
+    Remove-Item -LiteralPath $createdDirectory.FullName -Recurse -Force
+    Write-Host "已清理验证目录 $validationDirectory"
 }
