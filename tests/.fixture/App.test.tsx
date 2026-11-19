@@ -1,5 +1,32 @@
 import { expect, open, test } from "nsh/test";
 
+test("pauses a new installation and waits for manual resume after reopening", async () => {
+  const app = await open(".", { clock: {} });
+  const texts = () => app.texts().map(text => text.replaceAll("\\", "/"));
+  await app.press("选择安装位置");
+  expect(texts()).toContain("安装目录：E:/手动目录/Genshin Impact Game");
+  await app.press("开始下载");
+  await app.waitFor("已写入 1%（1 / 100 字节）");
+  await app.press("暂停下载");
+  await app.waitFor("下载已暂停");
+  await app.press("继续下载");
+  await app.waitFor("正在下载并安装…");
+  await app.press("重新打开启动器");
+  await app.waitFor("有未完成的安装，等待手动继续");
+  await app.wait(5000);
+  expect(app.texts()).toContain("继续下载");
+  expect(texts()).not.toContain("默认目录：E:/手动目录/Genshin Impact Game");
+
+  await app.press("继续下载");
+  await app.waitFor("游戏下载并安装完成");
+  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  await app.press("重新打开启动器");
+  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).not.toContain("继续下载");
+  await app.press("普通启动");
+  expect(texts()).toContain("请求启动：E:/手动目录/Genshin Impact Game");
+});
+
 test("reports a competing first save and displays the account that won", async () => {
   const app = await open(".", { clock: {} });
   await app.press("扫码添加米哈游账号");
@@ -358,7 +385,7 @@ test("gives installation guidance and blocks launch when no game exists", async 
   const app = await open(".");
   await app.press("模拟安装已移除");
   await app.press("重新查找");
-  expect(app.texts()).toContain("未找到游戏，请先安装国服官服，再选择游戏目录。");
+  expect(app.texts()).toContain("未找到游戏。可选择已有游戏目录，或下载国服官服。");
   await app.press("普通启动");
   expect(app.texts()).toContain("启动失败：请先选择有效游戏目录");
 });

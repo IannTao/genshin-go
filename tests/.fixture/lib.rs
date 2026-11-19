@@ -1,4 +1,5 @@
 use nsh_app_genshin_go::accounts::{AccountOperation, Authorization, QrSession, QrStatus};
+use nsh_app_genshin_go::game_install::{InstallControl, InstallOperation};
 use nsh_app_genshin_go::launcher::{DirectoryChoice, LauncherEnvironment, launcher};
 use nsh_app_genshin_go::profile::{Profile, VerifiedAccount};
 use nsh_core::prelude::*;
@@ -19,12 +20,16 @@ struct Environment {
     qr_status: Signal<u32>,
     slow_qr_creation: Signal<bool>,
     next_account: Signal<u32>,
-    selected: RefCell<Option<PathBuf>>,
+    selected: Rc<RefCell<Option<PathBuf>>>,
     directories: RefCell<Vec<PathBuf>>,
     fail_save: Signal<bool>,
     fail_authorization_save: Signal<bool>,
     fail_launch: Signal<bool>,
     launched: Signal<String>,
+    install_target: Rc<RefCell<Option<PathBuf>>>,
+    install_attempts: Cell<u32>,
+    previous_install: RefCell<Option<InstallControl>>,
+    installed: Rc<RefCell<Option<PathBuf>>>,
 }
 
 impl LauncherEnvironment for Environment {
@@ -169,7 +174,9 @@ impl LauncherEnvironment for Environment {
         Ok(())
     }
     fn validate(&self, path: &Path) -> Result<PathBuf, String> {
-        if self.directories.borrow().contains(&path.to_path_buf()) {
+        if self.directories.borrow().contains(&path.to_path_buf())
+            || self.installed.borrow().as_deref() == Some(path)
+        {
             Ok(path.into())
         } else {
             Err("不是国服官服游戏目录".into())
@@ -184,6 +191,45 @@ impl LauncherEnvironment for Environment {
     }
     fn choose_directory(&self) -> DirectoryChoice {
         Box::pin(async { Ok(Some("E:/手动目录".into())) })
+    }
+    fn supports_install(&self) -> bool {
+        true
+    }
+    fn pending_install(&self) -> Result<Option<PathBuf>, String> {
+        Ok(self.install_target.borrow().clone())
+    }
+    fn install_game(&self, parent: Option<PathBuf>, control: InstallControl) -> InstallOperation {
+        if self
+            .previous_install
+            .borrow()
+            .as_ref()
+            .is_some_and(|previous| !previous.is_paused())
+        {
+            return Box::pin(async { Err("上次下载仍在运行".into()) });
+        }
+        self.previous_install.replace(Some(control.clone()));
+        if let Some(parent) = parent {
+            self.install_target
+                .replace(Some(parent.join("Genshin Impact Game")));
+        }
+        let attempt = self.install_attempts.get() + 1;
+        self.install_attempts.set(attempt);
+        let pending = self.install_target.clone();
+        let installed = self.installed.clone();
+        let selected = self.selected.clone();
+        Box::pin(async move {
+            control.report(1, 100);
+            if attempt < 3 {
+                while !control.is_paused() {
+                    nsh_core::element::timer(std::time::Duration::from_millis(200)).await;
+                }
+                return Ok(None);
+            }
+            let path = pending.take();
+            installed.replace(path.clone());
+            selected.replace(path.clone());
+            Ok(path)
+        })
     }
 }
 
@@ -203,7 +249,7 @@ pub fn Fixture() -> impl IntoElement {
         qr_status: signal(0),
         slow_qr_creation: signal(false),
         next_account: signal(1),
-        selected: RefCell::new(None),
+        selected: Rc::default(),
         directories: RefCell::new(vec![
             "C:/原神".into(),
             "D:/原神".into(),
@@ -213,6 +259,10 @@ pub fn Fixture() -> impl IntoElement {
         fail_authorization_save: signal(false),
         fail_launch: signal(false),
         launched: signal(String::new()),
+        install_target: Rc::default(),
+        install_attempts: Cell::new(0),
+        previous_install: RefCell::new(None),
+        installed: Rc::default(),
     });
     let remove_environment = environment.clone();
     let other_launcher = environment.clone();

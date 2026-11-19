@@ -7,6 +7,7 @@ mod account_service;
 #[cfg(target_os = "windows")]
 mod account_store;
 pub mod accounts;
+pub mod game_install;
 pub mod launcher;
 mod native_environment;
 pub mod profile;
@@ -17,7 +18,7 @@ fn native(registry: &mut Registry) {
 }
 
 #[component]
-/// Windows launcher for an existing official mainland-China installation.
+/// Windows launcher for the official mainland-China game.
 pub fn App() -> impl IntoElement {
     launcher::launcher(Rc::new(native_environment::NativeEnvironment::new()))
 }

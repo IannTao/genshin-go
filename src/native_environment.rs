@@ -103,7 +103,7 @@ fn ini_value<'a>(contents: &'a str, section: &str, key: &str) -> Option<&'a str>
 }
 
 /// Normalize a game directory or a legacy launcher's parent directory.
-fn validate_installation(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn validate_installation(path: &Path) -> Result<PathBuf, String> {
     let mut candidates = vec![path.to_path_buf()];
     if let Ok(config) = fs::read_to_string(path.join("config.ini"))
         && let Some(value) = ini_value(&config, "launcher", "game_install_path")
@@ -129,26 +129,39 @@ fn validate_installation(path: &Path) -> Result<PathBuf, String> {
         {
             continue;
         }
-        let canonical = directory
-            .canonicalize()
-            .map_err(|error| error.to_string())?;
-        // The shell and the UI use ordinary Windows paths, rather than the
-        // extended-length prefix that Rust's canonicalize returns.
-        #[cfg(target_os = "windows")]
-        if let Some(path) = canonical.to_str() {
-            if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-                return Ok(PathBuf::from(format!(r"\\{unc}")));
-            }
-            if let Some(path) = path.strip_prefix(r"\\?\") {
-                return Ok(PathBuf::from(path));
-            }
-        }
-        return Ok(canonical);
+        return normalize_directory(&directory);
     }
     Err(
         "未找到有效国服官服安装，请选择包含 YuanShen.exe、YuanShen_Data 和 config.ini 的目录"
             .into(),
     )
+}
+
+/// Returns the canonical directory path in the format used by the UI and shell.
+pub(crate) fn normalize_directory(directory: &Path) -> Result<PathBuf, String> {
+    let canonical = directory
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    #[cfg(target_os = "windows")]
+    if let Some(path) = canonical.to_str() {
+        if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            return Ok(PathBuf::from(format!(r"\\{unc}")));
+        }
+        if let Some(path) = path.strip_prefix(r"\\?\") {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    Ok(canonical)
+}
+
+/// Stores the game directory in the specified launcher settings file.
+pub(crate) fn save_default_at(destination: &Path, directory: &Path) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(&Settings {
+        version: 1,
+        default_directory: directory.into(),
+    })
+    .map_err(|error| error.to_string())?;
+    atomic_write(destination, &bytes)
 }
 
 impl LauncherEnvironment for NativeEnvironment {
@@ -328,12 +341,7 @@ impl LauncherEnvironment for NativeEnvironment {
 
     fn save_default(&self, directory: &Path) -> Result<(), String> {
         let destination = self.settings.as_ref().map_err(Clone::clone)?;
-        let bytes = serde_json::to_vec_pretty(&Settings {
-            version: 1,
-            default_directory: directory.into(),
-        })
-        .map_err(|error| error.to_string())?;
-        atomic_write(destination, &bytes)
+        save_default_at(destination, directory)
     }
 
     fn validate(&self, directory: &Path) -> Result<PathBuf, String> {
@@ -353,14 +361,52 @@ impl LauncherEnvironment for NativeEnvironment {
     }
 
     fn choose_directory(&self) -> DirectoryChoice {
-        Box::pin(async {
-            nsh_core::element::pick_paths(
-                nsh_core::file_dialog::OpenDialog::folders().title("选择国服官服游戏目录"),
-            )
+        pick_directory("选择国服官服游戏目录")
+    }
+
+    fn choose_install_parent(&self) -> DirectoryChoice {
+        pick_directory("选择存放新安装的上一级目录")
+    }
+
+    #[cfg(target_os = "windows")]
+    fn supports_install(&self) -> bool {
+        true
+    }
+
+    #[cfg(target_os = "windows")]
+    fn pending_install(&self) -> Result<Option<PathBuf>, String> {
+        crate::game_install::windows::pending(self.settings.as_ref().map_err(Clone::clone)?)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn install_game(
+        &self,
+        parent: Option<PathBuf>,
+        control: crate::game_install::InstallControl,
+    ) -> crate::game_install::InstallOperation {
+        let settings = self.settings.clone();
+        Box::pin(async move {
+            let settings = settings?;
+            tokio::task::spawn_blocking(move || {
+                crate::game_install::windows::install(
+                    &settings,
+                    parent.as_deref(),
+                    &control,
+                    |dir| save_default_at(&settings, dir),
+                )
+            })
             .await
-            .map(|paths| paths.and_then(|paths| paths.into_iter().next()))
+            .map_err(|error| format!("安装任务意外停止：{error}"))?
         })
     }
+}
+
+fn pick_directory(title: &'static str) -> DirectoryChoice {
+    Box::pin(async move {
+        nsh_core::element::pick_paths(nsh_core::file_dialog::OpenDialog::folders().title(title))
+            .await
+            .map(|paths| paths.and_then(|paths| paths.into_iter().next()))
+    })
 }
 
 #[cfg(target_os = "windows")]

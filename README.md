@@ -28,8 +28,20 @@ The default is stored atomically in `%LOCALAPPDATA%/Genshin-Go/settings.json`.
 The app validates it again on reopening and before **普通启动**. Ordinary launch
 uses the Windows shell with the game directory as the working directory; Windows
 may ask for elevation according to the game's manifest. **已请求启动游戏** means
-Windows accepted the request; it does not claim the game reached its login screen.
-Game downloads belong to a later ticket.
+Windows accepted the request. The game opens its login screen separately.
+
+## Windows launcher: download and install
+
+Choose **选择安装位置** to select the parent for a new `Genshin Impact Game`
+directory, then click **开始下载**. The launcher downloads the current mainland-China
+official release and the Chinese voice pack. The selected drive needs room for the
+installed files (about 150 GB for version 7.2.0). Choose a writable parent without
+an existing `Genshin Impact Game` directory.
+
+Use **暂停下载** and **继续下载** to control the transfer. Closing the launcher keeps
+the verified data. On reopening, click **继续下载** to resume the saved task. Once
+the install finishes, the new game directory becomes the default for **普通启动**.
+See the [T06 protocol and Windows validation record](docs/validation/t06.md).
 
 The isolated interaction suite runs the same Rust launcher with a controlled
 application environment. It never launches the real game or writes the user's

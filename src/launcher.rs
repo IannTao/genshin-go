@@ -1,5 +1,6 @@
 //! Application boundary shared by the native root and the isolated test host.
 
+use crate::game_install::{InstallControl, InstallOperation};
 use nsh_base::theme;
 use nsh_core::element::input;
 use nsh_core::prelude::*;
@@ -13,7 +14,7 @@ use std::{
 /// Represents an asynchronous directory selection result.
 pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, String>>>>;
 
-/// External operations needed by installation selection and ordinary launch.
+/// External operations used by the launcher's Windows and test environments.
 pub trait LauncherEnvironment {
     /// Checks a saved account authorization with the remote service.
     fn check_authorization(&self, account_id: String) -> crate::accounts::AccountOperation<bool>;
@@ -59,6 +60,22 @@ pub trait LauncherEnvironment {
     fn launch(&self, directory: &Path) -> Result<(), String>;
     /// Opens the platform's game directory picker.
     fn choose_directory(&self) -> DirectoryChoice;
+    /// Opens the picker for the parent directory of a new installation.
+    fn choose_install_parent(&self) -> DirectoryChoice {
+        self.choose_directory()
+    }
+    /// Indicates whether the environment can install the Windows game.
+    fn supports_install(&self) -> bool {
+        false
+    }
+    /// Reads the destination of an unfinished installation.
+    fn pending_install(&self) -> Result<Option<PathBuf>, String> {
+        Ok(None)
+    }
+    /// Starts an installation under the given parent or resumes the saved task.
+    fn install_game(&self, _parent: Option<PathBuf>, _control: InstallControl) -> InstallOperation {
+        Box::pin(async { Err("本期仅支持 Windows 下载游戏".into()) })
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -95,7 +112,11 @@ fn initial_state(environment: &dyn LauncherEnvironment) -> InstallationState {
         state.message = if state.selected.is_some() {
             "默认目录已载入"
         } else if state.directories.is_empty() {
-            "未找到游戏，请先安装国服官服，再选择游戏目录。"
+            if environment.supports_install() {
+                "未找到游戏。可选择已有游戏目录，或下载国服官服。"
+            } else {
+                "未找到游戏，请先安装国服官服，再选择游戏目录。"
+            }
         } else {
             "请选择游戏目录并设为默认目录。"
         }
@@ -110,15 +131,19 @@ fn select(environment: &dyn LauncherEnvironment, state: Signal<InstallationState
         Ok(directory)
     });
     match result {
-        Ok(directory) => state.update(|s| {
-            if !s.directories.contains(&directory) {
-                s.directories.push(directory.clone());
-            }
-            s.selected = Some(directory);
-            s.message = "默认目录已保存".into();
-        }),
+        Ok(directory) => set_default(state, directory, "默认目录已保存"),
         Err(error) => state.update(|s| s.message = format!("无法选择目录：{error}")),
     }
+}
+
+fn set_default(state: Signal<InstallationState>, directory: PathBuf, message: &str) {
+    state.update(|s| {
+        if !s.directories.contains(&directory) {
+            s.directories.push(directory.clone());
+        }
+        s.selected = Some(directory);
+        s.message = message.into();
+    });
 }
 
 /// Renders an accessible button with the launcher's shared styling.
@@ -142,6 +167,9 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let path_environment = environment.clone();
     let refresh_environment = environment.clone();
     let launch_environment = environment.clone();
+    let install = crate::game_install::controls(environment.clone(), move |directory| {
+        set_default(state, directory, "默认目录已保存");
+    });
     scroll().flex_1().child(
         view()
             .p_6()
@@ -226,6 +254,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                         Err(error) => format!("启动失败：{error}"),
                     }
                 });
-            })),
+            }))
+            .child(install),
     )
 }
