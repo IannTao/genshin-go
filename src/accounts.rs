@@ -251,7 +251,12 @@ fn start_authorization(
                             ) {
                                 Ok(state) => {
                                     profile.set(state);
-                                    message.set("米游社授权已保存".into());
+                                    let status = if expected_account.is_some() {
+                                        "米游社授权已续期"
+                                    } else {
+                                        "米游社授权已保存"
+                                    };
+                                    message.set(status.into());
                                 }
                                 Err(error) => {
                                     let mut status = format!("保存米游社授权失败：{error}");

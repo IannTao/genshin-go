@@ -648,18 +648,24 @@ mod tests {
             )
             .is_err()
         );
-        assert_eq!(load(&path)?.uids, ["123456789"]);
+        assert!(load(&path)? == state);
         assert_eq!(
             load_authorization(&path, "10001")?.cookie_header,
             "test-secret-one"
         );
         db.execute_batch("DROP TRIGGER fail_renew;")?;
-        save(
+        let renewed = save(
             &path,
             grant("10001", "test-secret-renewed"),
             "123456789",
             original,
         )?;
+        assert!(load(&path)? == renewed);
+        let updated = renewed.account.as_ref().ok_or("no renewed account")?;
+        let original = original.ok_or("no original account")?;
+        assert_eq!(updated.account_id, original.account_id);
+        assert_eq!(updated.uid, original.uid);
+        assert_ne!(updated.revision, original.revision);
         assert_eq!(
             load_authorization(&path, "10001")?.cookie_header,
             "test-secret-renewed"
@@ -686,7 +692,7 @@ mod tests {
     }
 
     #[test]
-    fn removing_and_readding_authorization_leaves_each_history_intact()
+    fn removing_and_switching_authorization_leaves_each_history_intact()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = isolated_database()?;
         select_uid(&path, "987654321", true)?;
@@ -740,15 +746,36 @@ mod tests {
         );
         assert_eq!(added.uids, removed.uids);
         assert_eq!(added.active_uid, removed.active_uid);
-        assert_eq!(
-            db.query_row(
-                "SELECT group_concat(entry, ',' ORDER BY uid) FROM example_history",
-                [],
-                |row| row.get::<_, String>(0)
-            )?,
-            "first,second"
-        );
         drop(db);
+
+        remove_authorization(&path, &restored)?;
+        let switched = save(
+            &path,
+            grant("10002", "test-other-cookie"),
+            "987654321",
+            None,
+        )?;
+        let reopened = load(&path)?;
+        assert!(reopened == switched);
+        let current = reopened.account.ok_or("missing replacement account")?;
+        assert_eq!(current.account_id, "10002");
+        assert_eq!(current.uid, "987654321");
+        assert_eq!(reopened.uids, removed.uids);
+        assert_eq!(reopened.active_uid, removed.active_uid);
+        assert!(load_authorization(&path, "10001").is_err());
+        assert_eq!(
+            load_authorization(&path, "10002")?.cookie_header,
+            "test-other-cookie"
+        );
+
+        for (uid, entry) in [("123456789", "first"), ("987654321", "second")] {
+            select_uid(&path, uid, false)?;
+            let active_history = "SELECT entry FROM example_history JOIN active_uid USING (uid)";
+            assert_eq!(
+                open(&path)?.query_row(active_history, [], |row| row.get::<_, String>(0))?,
+                entry
+            );
+        }
         fs::remove_file(&path)?;
         fs::remove_dir(path.parent().ok_or("no directory")?)?;
         Ok(())

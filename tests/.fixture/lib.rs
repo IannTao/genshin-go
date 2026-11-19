@@ -8,9 +8,13 @@ use std::{
     rc::Rc,
 };
 
+const CONFIRMED_WITH_NEW_COOKIE: u32 = 7;
+const RENEWED_COOKIE: &str = "fixture-renewed-cookie";
+
 struct Environment {
     profile: RefCell<Profile>,
     revision: Cell<u64>,
+    cookie: RefCell<Option<String>>,
     uid_lookup: Signal<u32>,
     qr_status: Signal<u32>,
     slow_qr_creation: Signal<bool>,
@@ -18,13 +22,26 @@ struct Environment {
     selected: RefCell<Option<PathBuf>>,
     directories: RefCell<Vec<PathBuf>>,
     fail_save: Signal<bool>,
+    fail_authorization_save: Signal<bool>,
     fail_launch: Signal<bool>,
     launched: Signal<String>,
 }
 
 impl LauncherEnvironment for Environment {
-    fn check_authorization(&self, _account_id: String) -> AccountOperation<bool> {
-        Box::pin(async { Ok(false) })
+    fn check_authorization(&self, account_id: String) -> AccountOperation<bool> {
+        let matches_account = self
+            .profile
+            .borrow()
+            .account
+            .as_ref()
+            .is_some_and(|account| account.account_id == account_id);
+        let valid = self
+            .cookie
+            .borrow()
+            .as_deref()
+            .filter(|_| matches_account)
+            .map(|cookie| cookie == RENEWED_COOKIE);
+        Box::pin(async move { valid.ok_or_else(|| "账号授权不存在，请重新扫码".into()) })
     }
     fn load_profile(&self) -> Result<Profile, String> {
         Ok(self.profile.borrow().clone())
@@ -44,12 +61,13 @@ impl LauncherEnvironment for Environment {
         }
         Ok(profile.clone())
     }
-    fn verify_uid(&self, _authorization: Authorization) -> AccountOperation<String> {
+    fn verify_uid(&self, authorization: Authorization) -> AccountOperation<String> {
         let lookup = self.uid_lookup.get_untracked();
         Box::pin(async move {
             match lookup {
                 1 => Err("未查到该米哈游账号的游戏 UID".into()),
                 2 => Ok("987654321".into()),
+                _ if authorization.account_id == "10002" => Ok("987654321".into()),
                 _ => Ok("123456789".into()),
             }
         })
@@ -63,6 +81,10 @@ impl LauncherEnvironment for Environment {
         if self.profile.borrow().account.as_ref() != expected {
             return Err("本机授权已在另一启动器中更改".into());
         }
+        if self.fail_authorization_save.get_untracked() {
+            self.fail_authorization_save.set(false);
+            return Err("授权数据库不可写".into());
+        }
         let mut profile = self.profile.borrow_mut();
         if !profile.uids.iter().any(|saved| saved == uid) {
             profile.uids.push(uid.into());
@@ -75,6 +97,7 @@ impl LauncherEnvironment for Environment {
             uid: uid.into(),
             revision: revision.to_string(),
         });
+        self.cookie.replace(Some(authorization.cookie_header));
         Ok(profile.clone())
     }
     fn remove_authorization(&self, account: &VerifiedAccount) -> Result<Profile, String> {
@@ -83,6 +106,7 @@ impl LauncherEnvironment for Environment {
             return Err("授权已更改".into());
         }
         profile.account = None;
+        self.cookie.replace(None);
         Ok(profile.clone())
     }
     fn poll_qr(&self, _qr: QrSession) -> AccountOperation<QrStatus> {
@@ -91,9 +115,14 @@ impl LauncherEnvironment for Environment {
         Box::pin(async move {
             match status {
                 1 => Ok(QrStatus::Scanned),
-                2 => Ok(QrStatus::Confirmed(Authorization {
+                2 | CONFIRMED_WITH_NEW_COOKIE => Ok(QrStatus::Confirmed(Authorization {
                     account_id: format!("1000{account}"),
-                    cookie_header: "account_id_v2=10001; ltmid_v2=20001; ltoken_v2=fixture-secret; cookie_token_v2=fixture-cookie".into(),
+                    cookie_header: if status == CONFIRMED_WITH_NEW_COOKIE {
+                        RENEWED_COOKIE
+                    } else {
+                        "fixture-original-cookie"
+                    }
+                    .into(),
                 })),
                 3 => Ok(QrStatus::Expired),
                 4 => Ok(QrStatus::Cancelled),
@@ -169,6 +198,7 @@ pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
         profile: RefCell::new(Profile::default()),
         revision: Cell::new(0),
+        cookie: RefCell::new(None),
         uid_lookup: signal(0),
         qr_status: signal(0),
         slow_qr_creation: signal(false),
@@ -180,6 +210,7 @@ pub fn Fixture() -> impl IntoElement {
             "E:/手动目录".into(),
         ]),
         fail_save: signal(false),
+        fail_authorization_save: signal(false),
         fail_launch: signal(false),
         launched: signal(String::new()),
     });
@@ -190,6 +221,7 @@ pub fn Fixture() -> impl IntoElement {
     let slow_qr_creation = environment.slow_qr_creation;
     let next_account = environment.next_account;
     let fail_save = environment.fail_save;
+    let fail_authorization_save = environment.fail_authorization_save;
     let fail_launch = environment.fail_launch;
     let launched = environment.launched;
     let generation = signal(0_u32);
@@ -219,6 +251,16 @@ pub fn Fixture() -> impl IntoElement {
             view()
                 .on_press(move || qr_status.set(2))
                 .child(text("模拟扫码确认")),
+        )
+        .child(
+            view()
+                .on_press(move || qr_status.set(CONFIRMED_WITH_NEW_COOKIE))
+                .child(text("模拟扫码确认新凭据")),
+        )
+        .child(
+            view()
+                .on_press(move || fail_authorization_save.set(true))
+                .child(text("模拟下次授权写入失败")),
         )
         .child(
             view()
