@@ -1,5 +1,7 @@
 # Genshin-Go
 
+On Windows, use **首页** to launch the game once a valid default directory is saved. **管理游戏** opens **游戏管理** for directory selection and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

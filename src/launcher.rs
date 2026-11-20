@@ -1,7 +1,7 @@
 //! Application boundary shared by the native root and the isolated test host.
 
 use crate::game_install::{InstallControl, InstallOperation};
-use nsh_base::theme;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use nsh_core::element::input;
 use nsh_core::prelude::*;
 use std::{
@@ -9,6 +9,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     rc::Rc,
+    sync::LazyLock,
 };
 
 /// Represents an asynchronous directory selection result.
@@ -163,115 +164,325 @@ fn set_default(state: Signal<InstallationState>, directory: PathBuf, message: &s
     });
 }
 
-/// Renders an accessible button with the launcher's shared styling.
-pub(crate) fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
+const ACCENT: AdaptiveColor = AdaptiveColor::rgb(0x0021_5b49, 0x0021_5b49);
+const PAPER: AdaptiveColor = AdaptiveColor::rgb(0x00f4_f5ef, 0x0017_2420);
+const INK: AdaptiveColor = AdaptiveColor::rgb(0x0020_3832, 0x00f4_f5ef);
+const CONTROL: AdaptiveColor = AdaptiveColor::rgb(0x00e0_e8da, 0x002a_473d);
+const SIDEBAR_BACKGROUND: u32 = 0x0015_3e35;
+
+static HOME_LANDSCAPE: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "data:image/jpeg;base64,{}",
+        STANDARD.encode(include_bytes!("../assets/home-landscape.jpg"))
+    )
+});
+
+fn action_button(label: impl Into<String>, action: impl Fn() + 'static) -> View {
     view()
-        .px_4()
-        .py_3()
+        .px_3()
+        .py_2()
         .rounded(px(8.0))
-        .bg(move || theme().secondary)
-        .role(nsh_core::AccessibilityRole::Button)
+        .role(AccessibilityRole::Button)
         .on_press(action)
         .child(text(label.into()))
 }
 
+/// Renders an accessible button with the launcher's shared styling.
+pub(crate) fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
+    action_button(label, action).bg(CONTROL).text_color(INK)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Home,
+    Game,
+    Community,
+    Profile,
+}
+
+impl Page {
+    const ALL: [(Self, &'static str); 4] = [
+        (Self::Home, "首页"),
+        (Self::Game, "游戏管理"),
+        (Self::Community, "米游社"),
+        (Self::Profile, "角色资料"),
+    ];
+}
+
 /// Renders the same launcher with either the Windows environment or a test host.
 pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
+    let page = signal(Page::Home);
     let state = signal(initial_state(environment.as_ref()));
+    let (profile, profile_error) = match environment.load_profile() {
+        Ok(profile) => (profile, None),
+        Err(error) => (
+            crate::profile::Profile::default(),
+            Some(format!("读取本机数据失败：{error}")),
+        ),
+    };
+    let profile = signal(profile);
+    let install = crate::game_install::controls(environment.clone(), move |directory| {
+        set_default(state, directory, "默认目录已保存");
+    });
+    let accounts = crate::accounts::accounts(environment.clone(), profile);
+    let sign_in = crate::community_sign_in::controls(environment.clone(), profile);
+    let uid_spaces = crate::profile::spaces(environment.clone(), profile);
+    view()
+        .flex_1()
+        .min_h(px(0.0))
+        .flex_row()
+        .bg(PAPER)
+        .text_color(INK)
+        .child(sidebar(page))
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                // Hiding a page keeps its controls and pending work alive for this session.
+                .child(panel(
+                    page,
+                    Page::Home,
+                    home(page, state, environment.clone()),
+                ))
+                .child(panel(
+                    page,
+                    Page::Game,
+                    view()
+                        .gap_4()
+                        .child(game_directory(environment, state))
+                        .child(install),
+                ))
+                .child(panel(
+                    page,
+                    Page::Community,
+                    view()
+                        .gap_4()
+                        .child(profile_error.clone().map(text))
+                        .child(accounts)
+                        .child(sign_in),
+                ))
+                .child(panel(
+                    page,
+                    Page::Profile,
+                    view()
+                        .gap_2()
+                        .child(profile_error.map(text))
+                        .child(uid_spaces),
+                )),
+        )
+}
+
+fn sidebar(page: Signal<Page>) -> View {
+    view()
+        .w(|| {
+            px(if compact_window() {
+                70.0
+            } else if narrow_window() {
+                100.0
+            } else {
+                164.0
+            })
+        })
+        .flex_shrink(0.0)
+        .p(|| px(if narrow_window() { 8.0 } else { 12.0 }))
+        .gap_2()
+        .bg(rgb(SIDEBAR_BACKGROUND))
+        .text_color(rgb(0x00f4_f3de))
+        .child(
+            text("Genshin-Go")
+                .text_size(|| px(if narrow_window() { 12.0 } else { 14.0 }))
+                .mb_3()
+                .font_weight(FontWeight::BOLD)
+                .style_when(compact_window, Styled::hidden),
+        )
+        .child(Page::ALL.map(|(target, label)| {
+            action_button(label, move || page.set(target))
+                .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
+                .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
+                .accessibility_state(move || AccessibilityState {
+                    selected: page.get() == target,
+                    ..Default::default()
+                })
+                .bg(move || {
+                    if page.get() == target {
+                        rgb(0x0037_6e5b)
+                    } else {
+                        rgb(SIDEBAR_BACKGROUND)
+                    }
+                })
+                .hover(|style| style.bg(rgb(0x002a_5849)))
+        }))
+}
+
+fn narrow_window() -> bool {
+    window().width.0 < 700.0
+}
+
+fn compact_window() -> bool {
+    window().width.0 < 340.0
+}
+
+fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> impl IntoElement {
+    scroll()
+        .flex_1()
+        .style_when(move || page.get() != target, Styled::hidden)
+        .child(
+            view()
+                .p(|| px(if narrow_window() { 12.0 } else { 28.0 }))
+                .child(content.into_element()),
+        )
+}
+
+fn home(
+    page: Signal<Page>,
+    state: Signal<InstallationState>,
+    environment: Rc<dyn LauncherEnvironment>,
+) -> impl IntoElement {
+    view()
+        .flex_row()
+        .rounded(px(12.0))
+        .overflow_hidden()
+        .bg(AdaptiveColor::rgb(0x00e5_ecdb, 0x0025_3b32))
+        .child(
+            view()
+                .w(move || px((window().width.0 * 0.32).clamp(202.0, 332.0)))
+                .max_w(relative(1.0))
+                .flex_shrink(0.0)
+                .min_h(|| px(if narrow_window() { 260.0 } else { 356.0 }))
+                .p(|| {
+                    px(if compact_window() {
+                        8.0
+                    } else if narrow_window() {
+                        16.0
+                    } else {
+                        32.0
+                    })
+                })
+                .gap_3()
+                .justify_center()
+                .items_start()
+                .child(text("Windows · 国服官服").text_size(px(13.0)))
+                .child(
+                    text("原神启动器")
+                        .text_size(|| px(if narrow_window() { 25.0 } else { 38.0 }))
+                        .font_weight(FontWeight::BOLD),
+                )
+                .child(text(move || state.with(|state| state.message.clone())))
+                .child(when(
+                    move || state.with(|state| state.selected.is_some()),
+                    move || {
+                        let environment = environment.clone();
+                        action_button("普通启动", move || launch(environment.as_ref(), state))
+                            .bg(ACCENT)
+                            .text_color(white())
+                            .px_4()
+                            .py_3()
+                    },
+                ))
+                .child(button("管理游戏", move || page.set(Page::Game))),
+        )
+        .child(
+            image(HOME_LANDSCAPE.as_str())
+                .flex_1()
+                .min_w(px(0.0))
+                .object_fit(ResizeMode::Cover),
+        )
+}
+
+fn launch(environment: &dyn LauncherEnvironment, state: Signal<InstallationState>) {
+    let Some(path) = state.with_untracked(|state| state.selected.clone()) else {
+        return;
+    };
+    let directory = match environment.validate(&path) {
+        Ok(directory) => directory,
+        Err(error) => {
+            state.update(|state| {
+                state.selected = None;
+                state.message = format!("启动失败：目录已失效：{error}。请重新选择游戏目录。");
+            });
+            return;
+        }
+    };
+    let message = match environment.launch(&directory) {
+        Ok(()) => "已请求启动游戏".into(),
+        Err(error) => format!("启动失败：{error}"),
+    };
+    state.update(|state| state.message = message);
+}
+
+fn game_directory(
+    environment: Rc<dyn LauncherEnvironment>,
+    state: Signal<InstallationState>,
+) -> impl IntoElement {
     let manual = signal(String::new());
     let picking = signal(false);
     let choose_environment = environment.clone();
     let path_environment = environment.clone();
     let refresh_environment = environment.clone();
-    let launch_environment = environment.clone();
-    let install = crate::game_install::controls(environment.clone(), move |directory| {
-        set_default(state, directory, "默认目录已保存");
-    });
-    scroll().flex_1().child(
-        view()
-            .p_6()
-            .gap_4()
-            .bg(move || theme().background)
-            .text_color(move || theme().foreground)
-            .child(text("原神启动器").text_size(px(28.0)))
-            .child(text("Windows · 国服官服"))
-            .child(crate::profile::profile_controls(environment.clone()))
-            .child(text(move || state.get().message))
-            .child(text(move || {
-                state.get().selected.map_or_else(
-                    || "尚未选择默认目录".into(),
-                    |p| format!("默认目录：{}", p.display()),
-                )
-            }))
-            .child(view().gap_2().child(dynamic(move || {
-                state
-                    .get()
-                    .directories
-                    .into_iter()
-                    .map(|path| {
-                        let environment = environment.clone();
-                        button(format!("选择：{}", path.display()), move || {
-                            select(environment.as_ref(), state, &path);
-                        })
-                        .into_element()
-                    })
-                    .collect::<Vec<_>>()
-            })))
-            .child(button("重新查找", move || {
-                state.set(initial_state(refresh_environment.as_ref()));
-            }))
-            .child(
-                input()
-                    .test_id("game-directory")
-                    .label("游戏目录")
-                    .h_12()
-                    .px_3()
-                    .bg(move || theme().secondary)
-                    .placeholder("游戏目录（含 YuanShen.exe）")
-                    .value(move || manual.get())
-                    .on_change(move |value: &str| manual.set(value.to_owned())),
+    view()
+        .gap_2()
+        .child(
+            text("游戏目录")
+                .text_size(px(24.0))
+                .font_weight(FontWeight::BOLD),
+        )
+        .child(text(move || state.with(|state| state.message.clone())))
+        .child(text(move || {
+            state.get().selected.map_or_else(
+                || "尚未选择默认目录".into(),
+                |p| format!("默认目录：{}", p.display()),
             )
-            .child(button("使用此目录", move || {
-                select(
-                    path_environment.as_ref(),
-                    state,
-                    Path::new(manual.get().trim().trim_matches('"')),
-                );
-            }))
-            .child(button("选择游戏目录", move || {
-                if picking.get_untracked() {
-                    return;
+        }))
+        .child(view().gap_2().child(dynamic(move || {
+            state
+                .get()
+                .directories
+                .into_iter()
+                .map(|path| {
+                    let environment = environment.clone();
+                    button(format!("选择：{}", path.display()), move || {
+                        select(environment.as_ref(), state, &path);
+                    })
+                    .into_element()
+                })
+                .collect::<Vec<_>>()
+        })))
+        .child(button("重新查找", move || {
+            state.set(initial_state(refresh_environment.as_ref()));
+        }))
+        .child(
+            input()
+                .test_id("game-directory")
+                .label("游戏目录")
+                .h_10()
+                .px_3()
+                .bg(CONTROL)
+                .placeholder("游戏目录（含 YuanShen.exe）")
+                .value(move || manual.get())
+                .on_change(move |value: &str| manual.set(value.to_owned())),
+        )
+        .child(button("使用此目录", move || {
+            select(
+                path_environment.as_ref(),
+                state,
+                Path::new(manual.get().trim().trim_matches('"')),
+            );
+        }))
+        .child(button("选择游戏目录", move || {
+            if picking.get_untracked() {
+                return;
+            }
+            picking.set(true);
+            let environment = choose_environment.clone();
+            spawn(async move {
+                match environment.choose_directory().await {
+                    Ok(Some(path)) => select(environment.as_ref(), state, &path),
+                    Ok(None) => {}
+                    Err(error) => state.update(|s| {
+                        s.message = format!("目录选择失败：{error}。也可在上方输入路径。");
+                    }),
                 }
-                picking.set(true);
-                let environment = choose_environment.clone();
-                spawn(async move {
-                    match environment.choose_directory().await {
-                        Ok(Some(path)) => select(environment.as_ref(), state, &path),
-                        Ok(None) => {}
-                        Err(error) => state.update(|s| {
-                            s.message = format!("目录选择失败：{error}。也可在上方输入路径。");
-                        }),
-                    }
-                    picking.set(false);
-                });
-            }))
-            .child(button("普通启动", move || {
-                let selected = state.get_untracked().selected;
-                let result = selected
-                    .ok_or_else(|| "请先选择有效游戏目录".to_owned())
-                    .and_then(|path| {
-                        let directory = launch_environment.validate(&path).map_err(|error| {
-                            format!("目录已失效：{error}。请重新选择游戏目录。")
-                        })?;
-                        launch_environment.launch(&directory)
-                    });
-                state.update(|s| {
-                    s.message = match result {
-                        Ok(()) => "已请求启动游戏".into(),
-                        Err(error) => format!("启动失败：{error}"),
-                    }
-                });
-            }))
-            .child(install),
-    )
+                picking.set(false);
+            });
+        }))
 }

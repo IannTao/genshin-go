@@ -10,6 +10,7 @@ try {
     @'
 await app.setViewport(520, 900);
 const scan = async () => {
+  await app.press("米游社");
   await app.press("扫码添加米哈游账号");
   await app.waitFor("等待扫描：请使用米游社扫码", { timeout: 20000 });
   await app.waitFor("米游社授权已保存", { timeout: 120000 });
@@ -21,10 +22,12 @@ if (!account || !verified) throw new Error("未找到已验证的米哈游账号
 const uid = verified.slice("已验证游戏 UID：".length);
 await app.press(account.replace("米哈游账号：", "移除账号："));
 await app.waitFor("尚未保存米哈游账号");
+await app.press("角色资料");
 await app.waitFor("当前游戏 UID：" + uid);
 await scan();
 await app.waitFor(account);
 await app.waitFor(verified);
+await app.press("角色资料");
 await app.waitFor("当前游戏 UID：" + uid);
 await app.press("删除历史记录");
 await app.waitFor("选择 UID：" + uid);

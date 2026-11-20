@@ -21,11 +21,14 @@ try {
     $oldAuthorization = Join-Path $validationDirectory 'Genshin-Go/accounts-passport.dpapi'
     @'
 await app.setViewport(520, 900);
+await app.press("米游社");
 await app.waitFor("尚未保存米哈游账号");
 await app.waitFor("扫码添加米哈游账号");
+await app.press("角色资料");
 await app.waitFor("当前游戏 UID：123456789");
 await app.press("切换至 UID：987654321");
 await app.waitFor("当前游戏 UID：987654321");
+await app.press("米游社");
 await app.waitFor("尚未保存米哈游账号");
 '@ | nsh test nsh.json --target windows
     if ($LASTEXITCODE -ne 0) { throw "原生窗口升级验证失败（退出码 $LASTEXITCODE）" }
@@ -37,7 +40,7 @@ await app.waitFor("尚未保存米哈游账号");
         if ($LASTEXITCODE -ne 0) { throw "原生窗口扫码验证失败（退出码 $LASTEXITCODE）" }
 
         $restore = Get-Content (Join-Path $PSScriptRoot 't02-windows-restore.js') -Raw
-        $restore += "`nawait app.waitFor(`"当前游戏 UID：987654321`");"
+        $restore += "`nawait app.press(`"角色资料`");`nawait app.waitFor(`"当前游戏 UID：987654321`");"
         foreach ($restart in 1..2) {
             $restore | nsh test nsh.json --target windows
             if ($LASTEXITCODE -ne 0) { throw "第 $restart 次重开恢复失败（退出码 $LASTEXITCODE）" }

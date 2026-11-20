@@ -18,6 +18,9 @@ fn main() -> impl std::process::Termination {
             title: "Genshin-Go".to_owned(),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             app_id: "com.example.genshingo".to_owned(),
+            #[cfg(target_os = "windows")]
+            size: (1040, 720),
+            #[cfg(not(target_os = "windows"))]
             size: (480, 640),
             ..Default::default()
         },

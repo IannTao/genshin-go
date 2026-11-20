@@ -1,4 +1,5 @@
 await app.setViewport(480, 760);
+await app.press("米游社");
 const saved = app.texts().find((value) => value.startsWith("米哈游账号："));
 if (!saved) throw new Error("重开后未恢复米哈游账号");
 const verified = app.texts().find((value) => /^已验证游戏 UID：[1-9]\d{8,9}$/.test(value));

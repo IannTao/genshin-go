@@ -51,6 +51,7 @@ const scan = async (button, account, result) => {
   await app.waitFor("等待扫描：请使用米游社扫码", { timeout: 20000 });
   await app.waitFor(result, { timeout: 120000 });
 };
+await app.press("米游社");
 await app.waitFor("尚未保存米哈游账号");
 await scan("扫码添加米哈游账号", "A", "米游社授权已保存");
 await app.waitFor(`已验证游戏 UID：${uidA}`);
@@ -66,17 +67,22 @@ await app.waitFor(`已验证游戏 UID：${uidA}`);
 '@
 
     Invoke-LauncherValidation '重开并移除已续期的账号 A' @'
+await app.press("米游社");
 await app.waitFor(`已验证游戏 UID：${uidA}`);
 const accountA = app.texts().find(text => text.startsWith("米哈游账号："));
 if (!accountA) throw new Error("重开后未恢复账号 A");
 await app.press(accountA.replace("米哈游账号：", "移除账号："));
 await app.waitFor("尚未保存米哈游账号");
+await app.press("角色资料");
 await app.waitFor(`当前游戏 UID：${uidA}`);
 '@
 
     Invoke-LauncherValidation '重开并添加 B' @'
+await app.press("米游社");
 await app.waitFor("尚未保存米哈游账号");
+await app.press("角色资料");
 await app.waitFor(`当前游戏 UID：${uidA}`);
+await app.press("米游社");
 console.log("请使用账号 B 扫码并确认");
 await app.press("扫码添加米哈游账号");
 await app.waitFor("等待扫描：请使用米游社扫码", { timeout: 20000 });
@@ -85,14 +91,17 @@ await app.waitFor(`已验证游戏 UID：${uidB}`);
 '@
 
     Invoke-LauncherValidation '重开后仅恢复 B，并检查两个 UID 数据空间' @'
+await app.press("米游社");
 await app.waitFor(`已验证游戏 UID：${uidB}`);
 if (app.texts().filter(text => text.startsWith("米哈游账号：")).length !== 1)
   throw new Error("重开后应仅恢复一个米哈游账号");
+await app.press("角色资料");
 await app.waitFor(`当前游戏 UID：${uidA}`);
 await app.press(`切换至 UID：${uidB}`);
 await app.waitFor(`当前游戏 UID：${uidB}`);
 await app.press(`切换至 UID：${uidA}`);
 await app.waitFor(`当前游戏 UID：${uidA}`);
+await app.press("米游社");
 await app.waitFor(`已验证游戏 UID：${uidB}`);
 '@
     Write-Host '续期、移除、换账号和重开验证通过。'

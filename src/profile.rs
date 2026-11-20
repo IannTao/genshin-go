@@ -38,38 +38,22 @@ pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
     }
 }
 
-/// Renders account and UID controls backed by the same local profile.
-pub(crate) fn profile_controls(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
-    let (initial, error) = match environment.load_profile() {
-        Ok(profile) => (profile, None),
-        Err(error) => (
-            Profile::default(),
-            Some(format!("读取本机数据失败：{error}")),
-        ),
-    };
-    let profile = signal(initial);
-    view()
-        .gap_4()
-        .child(crate::accounts::accounts(environment.clone(), profile))
-        .child(crate::community_sign_in::controls(
-            environment.clone(),
-            profile,
-        ))
-        .child(spaces(environment, profile, error))
-}
-
-fn spaces(
+/// Renders the local UID data spaces backed by the launcher's shared profile.
+pub(crate) fn spaces(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
-    load_error: Option<String>,
 ) -> impl IntoElement {
     let input = signal(String::new());
-    let message = signal(load_error.unwrap_or_default());
+    let message = signal(String::new());
     let create = environment.clone();
     let switch = environment.clone();
     view()
         .gap_2()
-        .child(text("UID 数据空间"))
+        .child(
+            text("UID 数据空间")
+                .text_size(px(24.0))
+                .font_weight(FontWeight::BOLD),
+        )
         .child(text(move || {
             profile.get().active_uid.map_or_else(
                 || "尚未选择游戏 UID".into(),
@@ -101,7 +85,7 @@ fn spaces(
             nsh_core::element::input()
                 .test_id("game-uid")
                 .label("游戏 UID")
-                .h_12()
+                .h_10()
                 .px_3()
                 .bg(move || theme().secondary)
                 .placeholder("游戏 UID")
