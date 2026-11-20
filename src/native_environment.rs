@@ -166,6 +166,11 @@ pub(crate) fn save_default_at(destination: &Path, directory: &Path) -> Result<()
 
 impl LauncherEnvironment for NativeEnvironment {
     #[cfg(target_os = "windows")]
+    fn wish_database_path(&self) -> Option<Result<PathBuf, String>> {
+        Some(self.database_path())
+    }
+
+    #[cfg(target_os = "windows")]
     fn community_clock(&self) -> Option<crate::community_sign_in::Clock> {
         crate::community_service::clock()
     }

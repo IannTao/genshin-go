@@ -49,6 +49,11 @@ pub trait LauncherEnvironment {
     fn select_uid(&self, uid: &str, create: bool) -> Result<crate::profile::Profile, String>;
     /// Clears the local business records of one UID while preserving its data space.
     fn delete_uid_history(&self, uid: &str) -> Result<crate::profile::Profile, String>;
+    /// Identifies the local database used for Windows wish records, when available.
+    #[cfg(target_os = "windows")]
+    fn wish_database_path(&self) -> Option<Result<PathBuf, String>> {
+        None
+    }
     /// Resolves the unique game UID associated with the scanned authorization.
     fn verify_uid(
         &self,

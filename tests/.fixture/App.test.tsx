@@ -466,7 +466,7 @@ test("confirms history deletion for the current UID and preserves spaces and aut
   await app.press("删除历史记录");
   expect(app.dialogs()[0]).toMatchObject({
     title: "删除 UID 987654321 的历史记录？",
-    message: "将清除该 UID 所有类别的本地历史。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+    message: "将清除该 UID 在本机数据库中保存的各类历史。UIGF 备份和导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
     buttons: ["取消", "确认删除 UID：987654321"],
   });
   expect(app.texts()).not.toContain("已清除 UID 987654321 的本机历史记录");

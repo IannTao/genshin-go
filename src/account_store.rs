@@ -13,9 +13,10 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 5;
+const SCHEMA_VERSION: u32 = 6;
 
-fn database_error(error: &rusqlite::Error) -> String {
+/// Formats an error encountered while accessing the launcher database.
+pub(crate) fn database_error(error: &rusqlite::Error) -> String {
     format!("本机 SQLite 操作失败：{error}")
 }
 
@@ -29,7 +30,8 @@ fn schema_version(db: &Connection) -> Result<u32, String> {
     Ok(version)
 }
 
-fn open(path: &Path) -> Result<Connection, String> {
+/// Opens and migrates the launcher database with foreign keys enabled.
+pub(crate) fn open(path: &Path) -> Result<Connection, String> {
     fs::create_dir_all(path.parent().ok_or("本机数据目录无效")?)
         .map_err(|error| format!("无法创建本机数据目录：{error}"))?;
     // Multi-account releases stored all grants in separate DPAPI files. Their
@@ -121,6 +123,11 @@ fn open(path: &Path) -> Result<Connection, String> {
             .execute_batch(
                 "ALTER TABLE account_authorization ADD COLUMN protected_community_cookie BLOB;",
             )
+            .map_err(|error| database_error(&error))?;
+    }
+    if version < 6 {
+        migration
+            .execute_batch(crate::wishes::SCHEMA)
             .map_err(|error| database_error(&error))?;
     }
     migration
@@ -477,7 +484,8 @@ mod tests {
         let path = isolated_database()?;
         let db = open(&path)?;
         db.execute_batch(
-            "ALTER TABLE account_authorization DROP COLUMN protected_community_cookie;
+            "DROP TABLE wish_records;
+             ALTER TABLE account_authorization DROP COLUMN protected_community_cookie;
              PRAGMA user_version = 4;",
         )?;
         db.execute("INSERT INTO uid_spaces (uid) VALUES ('123456789')", [])?;

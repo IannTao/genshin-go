@@ -46,8 +46,13 @@ pub(crate) fn spaces(
     let input = signal(String::new());
     let message = signal(String::new());
     let managing = signal(false);
+    let history_revision = signal(0_u64);
     let create = environment.clone();
     let switch = environment.clone();
+    #[cfg(target_os = "windows")]
+    let wishes = environment
+        .wish_database_path()
+        .map(|path| crate::wishes::section(path, profile, history_revision));
     view()
         .gap_2()
         .child(
@@ -114,8 +119,24 @@ pub(crate) fn spaces(
                 Err(error) => message.set(error),
             }
         }))
-        .child(history_controls(environment, profile, managing, message))
+        .child(history_controls(
+            environment,
+            profile,
+            managing,
+            message,
+            history_revision,
+        ))
         .child(text(move || message.get()))
+        .child({
+            #[cfg(target_os = "windows")]
+            {
+                wishes
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                None::<View>
+            }
+        })
 }
 
 fn history_controls(
@@ -123,6 +144,7 @@ fn history_controls(
     profile: Signal<Profile>,
     managing: Signal<bool>,
     message: Signal<String>,
+    revision: Signal<u64>,
 ) -> impl IntoElement {
     let owner = Owner::current();
     dynamic(move || {
@@ -139,7 +161,14 @@ fn history_controls(
                         let environment = environment.clone();
                         message.set(String::new());
                         owner.run(|| {
-                            confirm_history_deletion(environment, uid, profile, managing, message);
+                            confirm_history_deletion(
+                                environment,
+                                uid,
+                                profile,
+                                managing,
+                                message,
+                                revision,
+                            );
                         });
                     })
                 }))
@@ -153,11 +182,12 @@ fn confirm_history_deletion(
     profile: Signal<Profile>,
     managing: Signal<bool>,
     message: Signal<String>,
+    revision: Signal<u64>,
 ) {
     let answer = alert_dialog()
         .title(format!("删除 UID {uid} 的历史记录？"))
         .description(
-            "将清除该 UID 所有类别的本地历史。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+            "将清除该 UID 在本机数据库中保存的各类历史。UIGF 备份和导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
         )
         // The first button receives the Windows default focus when there is no regular action.
         .cancel("cancel", "取消")
@@ -173,6 +203,7 @@ fn confirm_history_deletion(
         match environment.delete_uid_history(&uid) {
             Ok(state) => {
                 profile.set(state);
+                revision.update(|revision| *revision += 1);
                 managing.set(false);
                 message.set(format!("已清除 UID {uid} 的本机历史记录"));
             }
