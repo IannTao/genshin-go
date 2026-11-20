@@ -342,6 +342,26 @@ test("starts QR authorization and can cancel without adding an account", async (
   expect(app.texts()).toContain("尚未保存米哈游账号");
 });
 
+test("explains the existing data space when creating with an empty UID after a scan", async () => {
+  const app = await open(".");
+  await app.press("米游社");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("米游社授权已保存");
+  await app.press("角色资料");
+  await app.waitFor("当前游戏 UID：123456789");
+
+  await app.press("创建 UID 数据空间");
+  await app.waitFor("扫码验证的 UID 123456789 已有数据空间。添加其他角色时，请输入游戏 UID。");
+  expect(app.texts()).not.toContain("请输入 9 或 10 位有效游戏 UID");
+
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  await app.waitFor("已打开 UID 987654321 的数据空间");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  expect(app.texts()).toContain("切换至 UID：123456789");
+});
+
 test("links only the verified UID without changing the selected manual space", async () => {
   const app = await open(".", { clock: {} });
   await app.press("角色资料");

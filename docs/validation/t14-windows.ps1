@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $testRoot = Join-Path $PSScriptRoot ('.t14-' + [guid]::NewGuid())
 $testFile = Join-Path $testRoot 'wishes.test.ts'
 $data = Join-Path ([IO.Path]::GetTempPath()) ('genshin-go-wishes-' + [guid]::NewGuid())
-$previousAppData = $env:LOCALAPPDATA
+$previousDataDir = $env:GENSHIN_GO_DATA_DIR
 
 function Write-Uigf($Path, $Version, $Groups, [switch]$WithOtherGame) {
     $archive = @{
@@ -54,8 +54,8 @@ test("Windows wish records", async () => {
 Push-Location (Join-Path $PSScriptRoot '../..')
 try {
     $null = New-Item -ItemType Directory -Path $data, $testRoot
-    $env:LOCALAPPDATA = $data
     $appData = Join-Path $data 'Genshin-Go'
+    $env:GENSHIN_GO_DATA_DIR = $appData
     Write-Host "本次验证的数据目录（运行后保留） $data"
 
     $paths = @{
@@ -103,6 +103,7 @@ try {
     $null = New-Item -ItemType File -Path $blockedBackup
     Invoke-WishTest $paths @'
   await read(paths.initial);
+  await app.waitFor("已读取 1 条原神祈愿记录");
   await app.waitFor("请先创建 UID 123456789 的数据空间");
   await create("123456789");
   await app.press("预览导入至 UID 123456789");
@@ -117,12 +118,15 @@ try {
     Invoke-WishTest $paths @'
   await app.waitFor("当前游戏 UID：123456789");
   await read(paths.initial);
-  await app.press("预览导入至 UID 123456789");
+  await app.waitFor("导入至 UID 123456789：新增 1，重复 0，冲突 0");
+  await app.waitFor("暂无祈愿记录");
   await app.press("备份并确认导入");
   await app.waitFor("2025-10-09 08:00:00 · 角色活动祈愿 · 神里绫华");
   await waitForPrefix("已导入 UID 123456789 的 1 条祈愿记录。导入前备份：");
   await read(paths.merge);
+  await app.waitFor("已读取 4 条原神祈愿记录");
   await app.waitFor("未处理的数据：崩坏：星穹铁道");
+  expect(app.texts()).not.toContain("备份并确认导入");
   await app.press("预览导入至 UID 123456789");
   await app.waitFor("导入至 UID 123456789：新增 1，重复 1，冲突 1");
   await app.press("备份并确认导入");
@@ -200,7 +204,7 @@ try {
   await app.waitFor("共 1 条 · 第 1 页 · 时间 UTC");
 '@
 } finally {
-    $env:LOCALAPPDATA = $previousAppData
+    $env:GENSHIN_GO_DATA_DIR = $previousDataDir
     Remove-Item -LiteralPath $testFile -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $testRoot -ErrorAction SilentlyContinue
     Pop-Location

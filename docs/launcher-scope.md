@@ -90,7 +90,7 @@ Q1–Q33 的产品决策已记录并整理为第一期规格，发布至 GitHub 
 
 ### 第一批 · 账号与启动
 
-截至 2026-11-18，#2 普通启动和 #3 旧版扫码授权已完成。当前可并行推进 #4 和 #5。单账号授权按 [#30 规格修订](https://github.com/IannTao/genshin-go/issues/30) 的三张子票交付。
+截至 2026-11-19，#2、#3、#4 和 #6 已关闭，#5 仍开放。单账号授权按 [#30 规格修订](https://github.com/IannTao/genshin-go/issues/30) 交付，三张子票 #31、#32、#33 均已关闭。
 
 | 任务 | 直接前置 | 交付结果 |
 | --- | --- | --- |
@@ -100,6 +100,21 @@ Q1–Q33 的产品决策已记录并整理为第一期规格，发布至 GitHub 
 | [#31 首次扫码与重启恢复](https://github.com/IannTao/genshin-go/issues/31) | #5 | 验证 UID 后保存唯一授权，重启可恢复，并发扫码也最多保存一个账号。 |
 | [#32 旧版升级](https://github.com/IannTao/genshin-go/issues/32) | #31 | 首次升级清除全部旧授权，包括仅存一个账号的情况。重新扫码后可恢复新授权，各 UID 历史保留。 |
 | [#33 续期与更换账号](https://github.com/IannTao/genshin-go/issues/33) | #31、#6 | 同账号扫码续期，误扫其他账号或续期失败时保留原授权。更换账号须先移除当前授权。 |
+
+### Windows 启动器界面改版
+
+先交付 #35，使已安装游戏的用户能从首页一键普通启动。随后 #36–#40 可并行开发，每张票独立验收一条用户流程。[界面规格](specs/launcher-ui-design.md) · [父任务 #34](https://github.com/IannTao/genshin-go/issues/34)
+
+| 任务 | 直接前置 | 交付结果 |
+| --- | --- | --- |
+| [#35 四页导航与启动首页](https://github.com/IannTao/genshin-go/issues/35) | 无 | 从固定侧栏进入首页、游戏管理、米游社和角色资料。默认目录有效时可直接普通启动，窄窗口仍显示主操作。 |
+| [#36 首次选目录与恢复启动](https://github.com/IannTao/genshin-go/issues/36) | #35 | 按零个、一个或多个候选目录引导设置。游戏移动后可在游戏管理页重新定位并启动。 |
+| [#37 跨页查看与恢复下载](https://github.com/IannTao/genshin-go/issues/37) | #35 | 在其他页查看侧栏进度，返回同一任务暂停、继续或查看中断原因，重开后可手动续传。 |
+| [#38 扫码、续期与移除授权](https://github.com/IannTao/genshin-go/issues/38) | #35 | 在米游社页内完成扫码与续期。移除时核对目标账号，保留本地角色资料。 |
+| [#39 社区签到与奖励](https://github.com/IannTao/genshin-go/issues/39) | #35 | 按当前授权账号查看今日结果和奖励日历，就地重试、核对奖励或重新扫码。 |
+| [#40 按 UID 管理角色资料](https://github.com/IannTao/genshin-go/issues/40) | #35 | 无需授权即可创建、切换 UID。清理历史前核对完整 UID 及跨类别范围，保留其他 UID 的记录。 |
+
+每张票通过真实 Rust 界面复用 NSH 隔离环境验证交互。Windows 窗口布局和键盘焦点随对应任务实机验收。后续业务按下表逐批交付，更新与修复归入游戏管理，资料类型按 UID 开放相应页签，插件交付时增加「扩展」导航。
 
 ### 后续批次
 

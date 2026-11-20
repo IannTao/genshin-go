@@ -46,6 +46,13 @@ struct Settings {
 }
 
 fn settings_path() -> Result<PathBuf, String> {
+    if let Some(directory) = std::env::var_os("GENSHIN_GO_DATA_DIR") {
+        let directory = PathBuf::from(directory);
+        if !directory.is_absolute() {
+            return Err("GENSHIN_GO_DATA_DIR 必须是绝对路径".into());
+        }
+        return Ok(directory.join("settings.json"));
+    }
     std::env::var_os("LOCALAPPDATA")
         .map(|root| PathBuf::from(root).join("Genshin-Go").join("settings.json"))
         .ok_or_else(|| "无法确定本机配置目录".into())

@@ -1,10 +1,10 @@
 #requires -Version 7.2
 $ErrorActionPreference = 'Stop'
 $validationDirectory = Join-Path ([IO.Path]::GetTempPath()) ('genshin-go-t05-' + [guid]::NewGuid())
-$previousLocalAppData = $env:LOCALAPPDATA
+$previousDataDir = $env:GENSHIN_GO_DATA_DIR
 Push-Location (Join-Path $PSScriptRoot '../..')
 try {
-    $env:LOCALAPPDATA = $validationDirectory
+    $env:GENSHIN_GO_DATA_DIR = Join-Path $validationDirectory 'Genshin-Go'
     Write-Host "验证目录 $validationDirectory"
     Write-Host '请使用同一个米游社账号确认两次扫码。每次二维码出现后有两分钟。'
     @'
@@ -45,6 +45,6 @@ if (app.dialogs().at(-1)?.title !== `删除 UID ${uid} 的历史记录？`)
         nsh test nsh.json --target windows
     if ($LASTEXITCODE -ne 0) { throw "重开原生窗口复验失败（退出码 $LASTEXITCODE）" }
 } finally {
-    $env:LOCALAPPDATA = $previousLocalAppData
+    $env:GENSHIN_GO_DATA_DIR = $previousDataDir
     Pop-Location
 }

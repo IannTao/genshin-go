@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 /// Formats an error encountered while accessing the launcher database.
 pub(crate) fn database_error(error: &rusqlite::Error) -> String {
@@ -88,8 +88,6 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
         migration
             .execute_batch(
                 "
-            ALTER TABLE account_authorization ADD COLUMN revision TEXT NOT NULL DEFAULT '';
-            UPDATE account_authorization SET revision = lower(hex(randomblob(16)));
             CREATE TABLE uid_history (
                 uid TEXT NOT NULL PRIMARY KEY REFERENCES uid_spaces(uid)
             );
@@ -130,11 +128,33 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
             .execute_batch(crate::wishes::SCHEMA)
             .map_err(|error| database_error(&error))?;
     }
+    if version < 7 {
+        ensure_authorization_revision(&migration).map_err(|error| database_error(&error))?;
+    }
     migration
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| database_error(&error))?;
     migration.commit().map_err(|error| database_error(&error))?;
     Ok(db)
+}
+
+fn ensure_authorization_revision(db: &Connection) -> rusqlite::Result<()> {
+    // Some databases reached version 6 without the authorization revision column.
+    let has_revision = db.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM pragma_table_info('account_authorization')
+            WHERE name = 'revision'
+        )",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_revision {
+        db.execute_batch(
+            "ALTER TABLE account_authorization ADD COLUMN revision TEXT NOT NULL DEFAULT '';
+             UPDATE account_authorization SET revision = lower(hex(randomblob(16)));",
+        )?;
+    }
+    Ok(())
 }
 
 /// Reads the device identifier assigned to this local database.
@@ -479,6 +499,50 @@ mod tests {
     }
 
     #[test]
+    fn repairs_v6_authorization_without_a_revision() -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let db = open(&path)?;
+        db.execute_batch(
+            "ALTER TABLE account_authorization DROP COLUMN revision;
+             PRAGMA user_version = 6;
+             INSERT INTO uid_spaces VALUES ('123456789');
+             INSERT INTO active_uid VALUES (1, '123456789');
+             INSERT INTO account_authorization
+                (singleton, account_id, uid, protected_cookie, protected_community_cookie)
+             VALUES (1, '10001', '123456789', X'0102', X'0304');
+             INSERT INTO wish_records (uid, record_id, drawn_at, record_json)
+             VALUES ('123456789', '1', '2026-11-20 00:00:00', '{}');",
+        )?;
+        drop(db);
+
+        let profile = load(&path)?;
+        let account = profile.account.as_ref().ok_or("missing migrated account")?;
+        assert_eq!(profile.uids, ["123456789"]);
+        assert_eq!(profile.active_uid.as_deref(), Some(account.uid.as_str()));
+        assert_eq!(account.account_id, "10001");
+        assert_eq!(account.revision.len(), 32);
+        assert!(load(&path)? == profile);
+
+        let db = open(&path)?;
+        let cookies: (Vec<u8>, Vec<u8>) = db.query_row(
+            "SELECT protected_cookie, protected_community_cookie FROM account_authorization",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(cookies, (vec![1, 2], vec![3, 4]));
+        let record: String = db.query_row(
+            "SELECT record_id FROM wish_records WHERE uid = '123456789'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(record, "1");
+        drop(db);
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
+        Ok(())
+    }
+
+    #[test]
     fn community_cookie_is_protected_and_bound_to_the_saved_revision()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = isolated_database()?;
@@ -497,6 +561,7 @@ mod tests {
         )?;
         drop(db);
         let old = load(&path)?.account.ok_or("missing legacy account")?;
+        assert_eq!(old.revision, "old");
         let legacy = load_community_grant(&path, &old)?.ok_or("legacy grant unavailable")?;
         assert_eq!(legacy.web_cookie, "original-web-cookie");
         assert!(legacy.community_cookie.is_none());

@@ -15,7 +15,7 @@ if ($UidA -eq $UidB) { throw '请使用对应不同游戏 UID 的两个米哈游
 $validationDirectory = Join-Path ([IO.Path]::GetTempPath()) ('genshin-go-renewal-' + [guid]::NewGuid())
 $testDirectory = Join-Path $PSScriptRoot ('.issue-33-' + [guid]::NewGuid())
 $testPath = Join-Path $testDirectory 'windows.test.ts'
-$previousLocalAppData = $env:LOCALAPPDATA
+$previousDataDir = $env:GENSHIN_GO_DATA_DIR
 
 function Invoke-LauncherValidation($Stage, $Steps) {
     Write-Host $Stage
@@ -40,7 +40,7 @@ Push-Location (Join-Path $PSScriptRoot '../..')
 try {
     $null = New-Item -ItemType Directory -Path $validationDirectory
     $null = New-Item -ItemType Directory -Path $testDirectory
-    $env:LOCALAPPDATA = $validationDirectory
+    $env:GENSHIN_GO_DATA_DIR = Join-Path $validationDirectory 'Genshin-Go'
     Write-Host "验证目录 $validationDirectory（运行后保留）"
     Write-Host '第一阶段依次用 A、B、A 扫码。移除 A 后会再提示用 B 扫码。每次二维码出现后有两分钟。'
 
@@ -108,7 +108,7 @@ await app.waitFor(`已验证游戏 UID：${uidB}`);
 '@
     Write-Host '续期、移除、换账号和重开验证通过。'
 } finally {
-    $env:LOCALAPPDATA = $previousLocalAppData
+    $env:GENSHIN_GO_DATA_DIR = $previousDataDir
     if (Test-Path -LiteralPath $testPath) { Remove-Item -LiteralPath $testPath }
     if (Test-Path -LiteralPath $testDirectory) { Remove-Item -LiteralPath $testDirectory }
     Pop-Location

@@ -43,11 +43,9 @@ pub(crate) fn spaces(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
 ) -> impl IntoElement {
-    let input = signal(String::new());
     let message = signal(String::new());
     let managing = signal(false);
     let history_revision = signal(0_u64);
-    let create = environment.clone();
     let switch = environment.clone();
     #[cfg(target_os = "windows")]
     let wishes = environment
@@ -95,30 +93,12 @@ pub(crate) fn spaces(
                         .collect::<Vec<_>>()
                 })),
         )
-        .child(
-            nsh_core::element::input()
-                .test_id("game-uid")
-                .label("游戏 UID")
-                .h_10()
-                .px_3()
-                .bg(move || theme().secondary)
-                .placeholder("游戏 UID")
-                .value(move || input.get())
-                .on_change(move |value: &str| input.set(value.to_owned())),
-        )
-        .child(button("创建 UID 数据空间", move || {
-            let value = input.get_untracked();
-            let uid = value.trim();
-            match validate_uid(uid).and_then(|()| create.select_uid(uid, true)) {
-                Ok(state) => {
-                    profile.set(state);
-                    managing.set(false);
-                    input.set(String::new());
-                    message.set(String::new());
-                }
-                Err(error) => message.set(error),
-            }
-        }))
+        .child(uid_creation(
+            environment.clone(),
+            profile,
+            managing,
+            message,
+        ))
         .child(history_controls(
             environment,
             profile,
@@ -137,6 +117,50 @@ pub(crate) fn spaces(
                 None::<View>
             }
         })
+}
+
+fn uid_creation(
+    environment: Rc<dyn LauncherEnvironment>,
+    profile: Signal<Profile>,
+    managing: Signal<bool>,
+    message: Signal<String>,
+) -> impl IntoElement {
+    let input = signal(String::new());
+    view()
+        .gap_2()
+        .child(
+            nsh_core::element::input()
+                .test_id("game-uid")
+                .label("游戏 UID")
+                .h_10()
+                .px_3()
+                .bg(move || theme().secondary)
+                .placeholder("输入要添加的游戏 UID")
+                .value(move || input.get())
+                .on_change(move |value: &str| input.set(value.to_owned())),
+        )
+        .child(button("创建 UID 数据空间", move || {
+            let value = input.get_untracked();
+            let uid = value.trim();
+            if uid.is_empty()
+                && let Some(account) = profile.get_untracked().account
+            {
+                message.set(format!(
+                    "扫码验证的 UID {} 已有数据空间。添加其他角色时，请输入游戏 UID。",
+                    account.uid
+                ));
+                return;
+            }
+            match validate_uid(uid).and_then(|()| environment.select_uid(uid, true)) {
+                Ok(state) => {
+                    profile.set(state);
+                    managing.set(false);
+                    input.set(String::new());
+                    message.set(format!("已打开 UID {uid} 的数据空间"));
+                }
+                Err(error) => message.set(error),
+            }
+        }))
 }
 
 fn history_controls(

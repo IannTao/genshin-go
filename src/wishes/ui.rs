@@ -28,7 +28,7 @@ impl ImportControls {
         self.message.set(String::new());
     }
 
-    fn load(&self) {
+    fn load(&self, profile: Signal<Profile>) {
         self.archive.set(None);
         self.preview.set(None);
         let input = self.input.get_untracked();
@@ -40,8 +40,14 @@ impl ImportControls {
         match Archive::read(&PathBuf::from(path)) {
             Ok(archive) => {
                 self.group.set(0);
-                self.archive.set(Some(Rc::new(archive)));
                 self.message.set(String::new());
+                if let [group] = archive.groups.as_slice()
+                    && let Some(uid) = &group.uid
+                    && profile.get_untracked().uids.contains(uid)
+                {
+                    self.preview(uid, group);
+                }
+                self.archive.set(Some(Rc::new(archive)));
             }
             Err(error) => self.message.set(error),
         }
@@ -81,7 +87,7 @@ impl ImportControls {
         }
     }
 
-    fn file_input(&self) -> impl IntoElement {
+    fn file_input(&self, profile: Signal<Profile>) -> impl IntoElement {
         let value = self.input;
         let edit = self.clone();
         let browse = self.clone();
@@ -118,7 +124,7 @@ impl ImportControls {
                                     Ok(Some(paths)) => {
                                         if let Some(path) = paths.first() {
                                             browse.set_input(path.to_string_lossy().into_owned());
-                                            browse.load();
+                                            browse.load(profile);
                                         }
                                     }
                                     Ok(None) => (),
@@ -127,7 +133,7 @@ impl ImportControls {
                             });
                         });
                     }))
-                    .child(button("读取 UIGF 文件", move || load.load())),
+                    .child(button("读取 UIGF 文件", move || load.load(profile))),
             )
     }
 
@@ -146,7 +152,9 @@ impl ImportControls {
                 let Some(group) = archive.groups.get(index) else {
                     return content.child(text("此文件没有原神祈愿记录"));
                 };
+                let count: usize = archive.groups.iter().map(|group| group.list.len()).sum();
                 content
+                    .child(text(format!("已读取 {count} 条原神祈愿记录")))
                     .child(group_options(&archive, index, &controls))
                     .child(target_options(group, &archive, index, profile, &controls))
                     .child(controls.preview.get().map(|preview| {
@@ -262,7 +270,7 @@ pub(super) fn section(
         .child(button("UIGF 数据格式规范", || {
             drop(open_url("https://uigf.org/zh/standards/UIGF.html"));
         }))
-        .child(controls.file_input())
+        .child(controls.file_input(profile))
         .child(controls.loaded(profile))
         .child(text(move || controls.message.get()))
         .child(history(database, profile, revision))

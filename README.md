@@ -8,7 +8,7 @@ The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk
 
 Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. The launcher stores one authorization in `%LOCALAPPDATA%/Genshin-Go/launcher.sqlite3`, with the Cookie encrypted using current-user Windows DPAPI. Reopening restores the account and its verified UID. In **管理授权**, choose **检查授权** to check the saved account. Choose **重新扫码** on the 米游社 page to renew it with the same account and UID. Sign in to the game in the official client after clicking **普通启动**. Authorization is not portable between Windows users or computers.
 
-In **UID 数据空间**, enter a game UID and choose **创建 UID 数据空间**. You can create and switch spaces without signing in. The launcher restores the selected space on reopening. Scan authorization associates only the game UID verified by 米游社, while keeping any existing space selection. See the [T04 validation record](docs/validation/t04.md).
+Scan authorization sets up a data space for the game UID verified by 米游社 and keeps any existing space selection. To add another character in **角色资料**, enter its game UID and choose **创建 UID 数据空间**. You can create and switch spaces without signing in. The launcher restores the selected space on reopening. See the [T04 validation record](docs/validation/t04.md).
 
 The launcher assigns one device ID to the local database and reuses it for refreshed QR codes, new scans and authorization requests after reopening.
 
@@ -73,6 +73,10 @@ On Windows, run the local checks in PowerShell 7.2 or later:
 
 The script runs formatting, Clippy, the offline ticket synchronization tests,
 and the NSH checks and tests for both the root project and the interaction fixture.
+Windows CI runs the same script. The root tests use a fresh `GENSHIN_GO_DATA_DIR`
+that the script removes after the run. NSH keeps its normal cache location.
+When running `nsh test` or `nsh test nsh.json` directly against the Rust root, set
+`GENSHIN_GO_DATA_DIR` to an absolute path to an isolated directory first.
 From `tests/.fixture`, run `nsh test .windows/authorization.test.ts --target windows`
 to verify that Enter cancels account removal in the Windows window.
 Run `nsh test .windows/history.test.ts --target windows` to verify that Enter
@@ -84,6 +88,8 @@ the current Windows user. If a sandboxed test reports `Windows 无法保护或�
 rerun the same command from that user's PowerShell session with access to DPAPI.
 To run the isolated storage tests alone, use
 `cargo test --locked --lib account_store::tests::`.
+For a read-only schema and UID space check, see the
+[SQLite diagnostic commands](docs/validation/t04.md#sqlite-结构检查).
 
 The fixture has its own NSH entry and must run from its directory. Its hidden
 directory keeps the root runner from discovering tests for a different Rust root.
@@ -97,8 +103,8 @@ An app written in Rust: its UI is `src/lib.rs`, and `nsh.json` names the root co
 ```sh
 nsh run                      # this machine's backend; --target ios, android, web, macos, linux or windows
 nsh check                    # cargo check of the crate, then type checks App.test.tsx
-nsh test                     # cargo test, then App.test.tsx: the root tested from TypeScript, headless; --target to run it on a platform
-nsh test nsh.json --trace    # headless: what the root mounts, and the time of each commit
+nsh test                     # headless root tests; configure GENSHIN_GO_DATA_DIR first
+nsh test nsh.json --trace    # root mount trace; configure GENSHIN_GO_DATA_DIR first
 nsh package --target web     # or ios, android, macos, linux, windows
 ```
 
@@ -137,7 +143,15 @@ Cargo keeps its normal `target/` directory and respects your existing `CARGO_TAR
 
 ## UI prototype
 
-Open the throwaway launcher layout prototype on Windows with one command:
+Open the interactive Windows launcher prototype:
+
+```powershell
+Start-Process .\src\launcher-prototype.html
+```
+
+Use **演示场景** in the lower left to try first-time setup, an interrupted download, or an expired authorization. Downloads, QR confirmations, and UID records use in-memory sample data. See the [interaction design](docs/specs/launcher-ui-design.md).
+
+Open the earlier three-layout comparison:
 
 ```powershell
 Start-Process .\src\ui-prototype.html

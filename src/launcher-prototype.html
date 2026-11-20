@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Genshin-Go · 启动器交互原型</title>
+  <link rel="stylesheet" href="launcher-prototype.css">
+  <script defer src="launcher-prototype.js"></script>
+</head>
+<body>
+  <aside>
+    <div class="brand"><span class="seal" aria-hidden="true">✦</span> Genshin-Go</div>
+    <nav aria-label="主导航" id="navigation"></nav>
+    <div class="side-bottom"><div id="transfer"></div>
+      <button type="button" class="scene" data-do="scenes">⚙　演示场景</button>
+    </div>
+  </aside>
+  <main>
+    <header><span>工作空间　 /　 <strong id="crumb">首页</strong></span><span class="platform">Windows · 国服官服</span></header>
+    <section id="page" aria-label="页面内容"></section>
+  </main>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="notice" role="status"></div>
+</body>
+</html>

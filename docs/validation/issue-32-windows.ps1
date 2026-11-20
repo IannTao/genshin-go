@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $tempRoot = [IO.Path]::TrimEndingDirectorySeparator((Get-Item -LiteralPath ([IO.Path]::GetTempPath())).FullName)
 $validationDirectory = Join-Path $tempRoot ('genshin-go-upgrade-' + [guid]::NewGuid())
-$previousLocalAppData = $env:LOCALAPPDATA
+$previousDataDir = $env:GENSHIN_GO_DATA_DIR
 $previousValidationLocalAppData = $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA
 Push-Location (Join-Path $PSScriptRoot '../..')
 try {
@@ -17,7 +17,7 @@ try {
     cargo test --locked --lib account_store::tests::prepare_windows_upgrade_validation -- --ignored --exact
     if ($LASTEXITCODE -ne 0) { throw "准备旧版数据失败（退出码 $LASTEXITCODE）" }
 
-    $env:LOCALAPPDATA = $validationDirectory
+    $env:GENSHIN_GO_DATA_DIR = Join-Path $validationDirectory 'Genshin-Go'
     $oldAuthorization = Join-Path $validationDirectory 'Genshin-Go/accounts-passport.dpapi'
     @'
 await app.setViewport(520, 900);
@@ -47,7 +47,7 @@ await app.waitFor("尚未保存米哈游账号");
         }
     }
 } finally {
-    $env:LOCALAPPDATA = $previousLocalAppData
+    $env:GENSHIN_GO_DATA_DIR = $previousDataDir
     $env:GENSHIN_GO_VALIDATION_LOCALAPPDATA = $previousValidationLocalAppData
     Pop-Location
 }
