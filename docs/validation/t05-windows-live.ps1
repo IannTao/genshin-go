@@ -20,6 +20,8 @@ const account = app.texts().find(text => text.startsWith("米哈游账号："));
 const verified = app.texts().find(text => text.startsWith("已验证游戏 UID："));
 if (!account || !verified) throw new Error("未找到已验证的米哈游账号及游戏 UID");
 const uid = verified.slice("已验证游戏 UID：".length);
+await app.press("管理授权");
+app.onDialog(() => account.replace("米哈游账号：", "确认移除账号："));
 await app.press(account.replace("米哈游账号：", "移除账号："));
 await app.waitFor("尚未保存米哈游账号");
 await app.press("角色资料");

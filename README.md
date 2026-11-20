@@ -6,7 +6,7 @@ On Windows, use **首页** to launch the game once a valid default directory is 
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.
 
-Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. The launcher stores one authorization in `%LOCALAPPDATA%/Genshin-Go/launcher.sqlite3`, with the Cookie encrypted using current-user Windows DPAPI. Reopening restores the account and its verified UID. Use **检查授权** to check the saved account or **重新扫码** to renew it with the same account and UID. Sign in to the game in the official client after clicking **普通启动**. Authorization is not portable between Windows users or computers.
+Use **扫码添加米哈游账号** to create a new QR code and confirm it in 米游社. The UI shows scanning, confirmation, expiry, cancellation and network errors. Expired codes can be refreshed. The launcher stores one authorization in `%LOCALAPPDATA%/Genshin-Go/launcher.sqlite3`, with the Cookie encrypted using current-user Windows DPAPI. Reopening restores the account and its verified UID. In **管理授权**, choose **检查授权** to check the saved account. Choose **重新扫码** on the 米游社 page to renew it with the same account and UID. Sign in to the game in the official client after clicking **普通启动**. Authorization is not portable between Windows users or computers.
 
 In **UID 数据空间**, enter a game UID and choose **创建 UID 数据空间**. You can create and switch spaces without signing in. The launcher restores the selected space on reopening. Scan authorization associates only the game UID verified by 米游社, while keeping any existing space selection. See the [T04 validation record](docs/validation/t04.md).
 
@@ -14,7 +14,7 @@ The launcher assigns one device ID to the local database and reuses it for refre
 
 Upgrading from the multi-account version removes its saved authorizations. You can switch between existing UID data spaces before scanning again. To verify the upgrade with isolated Windows data, run `./docs/validation/issue-32-windows.ps1` in PowerShell 7.2 or later. Add `-LiveScan` to verify a real scan and two restarts. The script removes its temporary directory after a successful run. Use `-KeepData` to retain it for inspection. A failed run leaves the directory in place for diagnosis.
 
-Use **移除账号** to delete the saved 米游社 authorization and keep the UID spaces and their records. Scanning again verifies the account's game UID and links it to the existing space. To clear local records, open **删除历史记录**, select a UID, and confirm the UID displayed. This keeps the UID space and any saved authorization available.
+In **管理授权**, choose **移除账号** and confirm the displayed account to remove its 米游社 authorization. Automatic sign-in requires authorization again. The UID spaces and their records stay available. Scanning again verifies the account's game UID and links it to the existing space. To clear local records, open **删除历史记录**, select a UID, and confirm the UID displayed. This keeps the UID space and any saved authorization available.
 
 ## Windows community sign-in
 
@@ -65,6 +65,8 @@ On Windows, run the local checks in PowerShell 7.2 or later:
 
 The script runs formatting, Clippy, the offline ticket synchronization tests,
 and the NSH checks and tests for both the root project and the interaction fixture.
+From `tests/.fixture`, run `nsh test .windows/authorization.test.ts --target windows`
+to verify that Enter cancels account removal in the Windows window.
 Run the [live account validation](docs/validation/t02.md#重跑验证) separately.
 
 Windows storage tests create their own temporary databases and use DPAPI under

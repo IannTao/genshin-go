@@ -71,6 +71,8 @@ await app.press("米游社");
 await app.waitFor(`已验证游戏 UID：${uidA}`);
 const accountA = app.texts().find(text => text.startsWith("米哈游账号："));
 if (!accountA) throw new Error("重开后未恢复账号 A");
+await app.press("管理授权");
+app.onDialog(() => accountA.replace("米哈游账号：", "确认移除账号："));
 await app.press(accountA.replace("米哈游账号：", "移除账号："));
 await app.waitFor("尚未保存米哈游账号");
 await app.press("角色资料");

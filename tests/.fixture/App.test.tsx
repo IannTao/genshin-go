@@ -182,6 +182,8 @@ test("cancels pending community sign-in retries when the saved account is remove
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitFor("签到请求次数：1");
+  await app.press("管理授权");
+  app.onDialog(() => "确认移除账号：10001");
   await app.press("移除账号：10001");
   await app.wait(7000);
   expect(app.texts()).toContain("签到请求次数：1");
@@ -283,7 +285,7 @@ test("starts QR authorization and can cancel without adding an account", async (
   const app = await open(".");
   await app.press("米游社");
   await app.press("扫码添加米哈游账号");
-  expect(app.texts()).toContain("等待扫描：请使用米游社扫码");
+  await app.waitFor("等待扫描：请使用米游社扫码");
   await app.press("取消扫码");
   expect(app.texts()).toContain("已取消扫码");
   expect(app.texts()).toContain("尚未保存米哈游账号");
@@ -337,8 +339,10 @@ test("retries a failed first scan and restores only the verified account's contr
   await app.press("米游社");
   expect(app.texts()).toContain("米哈游账号：10001");
   expect(app.texts()).toContain("已验证游戏 UID：123456789");
-  expect(app.texts()).toContain("检查授权：10001");
   expect(app.texts()).toContain("重新扫码：10001");
+  expect(app.texts()).not.toContain("检查授权：10001");
+  await app.press("管理授权");
+  expect(app.texts()).toContain("检查授权：10001");
   expect(app.texts()).toContain("移除账号：10001");
   expect(app.texts()).not.toContain("扫码添加米哈游账号");
   expect(app.texts()).not.toContain("刷新二维码");
@@ -355,10 +359,18 @@ test("removes the old authorization and restores only the new account with both 
   await app.press("模拟扫码确认");
   await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
 
-  await app.press("重新扫码：10001");
-  await app.press("模拟扫码确认");
+  expect(app.texts()).not.toContain("移除账号：10001");
+  await app.press("管理授权");
   await app.press("移除账号：10001");
-  await app.wait(4000);
+  expect(app.dialogs()[0]).toMatchObject({
+    title: "移除米哈游账号 10001？",
+    message: "移除后，自动签到需要重新授权。本地角色资料会保留。",
+    buttons: ["取消", "确认移除账号：10001"],
+  });
+  expect(app.texts()).toContain("米哈游账号：10001");
+  app.onDialog(() => "确认移除账号：10001");
+  await app.press("移除账号：10001");
+  await app.waitFor("尚未保存米哈游账号");
   await app.press("重新打开启动器");
   await app.press("米游社");
   expect(app.texts()).toContain("尚未保存米哈游账号");
@@ -423,12 +435,21 @@ test("shows scanned and expired states and refreshes an expired QR", async () =>
   const app = await open(".");
   await app.press("米游社");
   await app.press("扫码添加米哈游账号");
+  await app.waitFor("id:authorization-qr");
+  expect(app.texts()).not.toContain("扫码添加米哈游账号");
+  expect(app.texts()).not.toContain("刷新二维码");
   await app.press("模拟已扫描");
   await app.waitUntil(() => app.texts().includes("等待确认：请在米游社确认授权"));
   await app.press("模拟二维码过期");
   await app.waitUntil(() => app.texts().includes("二维码已过期，请刷新二维码"));
+  expect(app.count("id:authorization-qr")).toBe(0);
   await app.press("刷新二维码");
-  expect(app.texts()).toContain("等待扫描：请使用米游社扫码");
+  await app.waitFor("等待扫描：请使用米游社扫码");
+  expect(app.count("id:authorization-qr")).toBe(1);
+  await app.press("取消扫码");
+  expect(app.count("id:authorization-qr")).toBe(0);
+  expect(app.texts()).toContain("扫码添加米哈游账号");
+  expect(app.texts()).not.toContain("取消扫码");
 });
 
 test("commits renewed credentials only after a successful write", async () => {
@@ -437,6 +458,7 @@ test("commits renewed credentials only after a successful write", async () => {
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
 
@@ -448,6 +470,7 @@ test("commits renewed credentials only after a successful write", async () => {
   expect(app.texts()).toContain("已验证游戏 UID：123456789");
   await app.press("重新打开启动器");
   await app.press("米游社");
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
 
@@ -458,6 +481,7 @@ test("commits renewed credentials only after a successful write", async () => {
   await app.press("米游社");
   expect(app.texts().filter(t => t === "米哈游账号：10001").length).toBe(1);
   expect(app.texts()).toContain("已验证游戏 UID：123456789");
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 米游社授权有效");
 });
@@ -470,9 +494,11 @@ test("keeps the scan status while a replacement QR is being created", async () =
   await app.waitUntil(() => app.texts().includes("米哈游账号：10001"));
   await app.press("模拟延迟创建二维码");
   await app.press("重新扫码：10001");
-  await app.press("检查授权：10001");
+  expect(app.texts()).not.toContain("管理授权");
   expect(app.texts()).toContain("正在获取二维码…");
+  expect(app.texts()).toContain("正在续期米哈游账号：10001");
   await app.waitUntil(() => app.texts().includes("等待扫描：请使用米游社扫码"));
+  expect(app.texts()).toContain("正在续期米哈游账号：10001");
 });
 
 test("reports phone cancellation and network failure without saving authorization", async () => {
@@ -481,7 +507,7 @@ test("reports phone cancellation and network failure without saving authorizatio
   await app.press("扫码添加米哈游账号");
   await app.press("模拟手机取消");
   await app.waitUntil(() => app.texts().includes("已取消扫码"));
-  await app.press("刷新二维码");
+  await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码网络失败");
   await app.waitUntil(() => app.texts().includes("网络失败：无法连接米哈游服务，请重试"));
   expect(app.texts()).toContain("尚未保存米哈游账号");
@@ -525,6 +551,7 @@ test("rejects another account during renewal and restores the original", async (
   expect(app.texts()).toContain("米哈游账号：10001");
   expect(app.texts()).toContain("已验证游戏 UID：123456789");
   expect(app.texts()).not.toContain("米哈游账号：10002");
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 米游社授权有效");
 });
@@ -549,6 +576,7 @@ test("restores the original authorization after interrupted renewal scans", asyn
     await app.press("米游社");
     expect(app.texts()).toContain("米哈游账号：10001");
     expect(app.texts()).toContain("已验证游戏 UID：123456789");
+    await app.press("管理授权");
     await app.press("检查授权：10001");
     expect(app.texts()).toContain("账号 10001 米游社授权有效");
   }
@@ -576,6 +604,7 @@ test("retains the original account and UID when renewal cannot verify the same U
   await app.press("角色资料");
   expect(app.texts()).not.toContain("切换至 UID：987654321");
   await app.press("米游社");
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 米游社授权有效");
 });
@@ -606,6 +635,7 @@ test("starts the game independently of saved MiYouShe authorization", async () =
   await app.waitUntil(() => app.texts().includes("米哈游账号：10001"));
   expect(app.texts()).toContain("米游社授权已保存");
 
+  await app.press("管理授权");
   await app.press("检查授权：10001");
   expect(app.texts()).toContain("账号 10001 授权已失效，请重新扫码");
   await app.press("首页");
