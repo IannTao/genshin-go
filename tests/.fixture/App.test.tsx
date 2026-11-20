@@ -188,39 +188,61 @@ test("cancels pending community sign-in retries when the saved account is remove
   expect(app.texts()).not.toContain("社区签到：待处理");
 });
 
-test("pauses a new installation and waits for manual resume after reopening", async () => {
-  const app = await open(".", { clock: {} });
-  await app.press("游戏管理");
+test("follows one download across pages and waits for manual resume after reopening", async () => {
+  const app = await open(".", { clock: {}, width: 1040, height: 720 });
   const texts = () => app.texts().map(text => text.replaceAll("\\", "/"));
+  const target = "E:/手动目录/Genshin Impact Game";
   await app.press("选择安装位置");
-  expect(texts()).toContain("安装目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain(`安装目录：${target}`);
   await app.press("开始下载");
-  await app.press("角色资料");
-  await app.wait(1000);
-  expect(app.texts()).not.toContain("暂停下载");
-  await app.press("游戏管理");
+  await app.press("首页");
   await app.waitFor("已写入 1%（1 / 100 字节）");
   await app.press("暂停下载");
   await app.waitFor("下载已暂停");
   await app.press("继续下载");
+  await app.press("游戏管理");
+  await app.scroll("下载国服官服", 800);
+  await app.press("角色资料");
+  await app.waitFor("下载中 · 1%");
+  await app.press("模拟下载进度更新");
+  await app.waitFor("下载中 · 40%");
+  expect(app.texts()).toContain("UID 数据空间");
+  await app.press("下载中 · 40%");
+  expect(texts()).toContain(`安装目录：${target}`);
+  expect(app.texts()).toContain("已写入 40%（40 / 100 字节）");
+  await app.press("暂停下载");
+  await app.waitFor("下载已暂停");
+  await app.press("继续下载");
+
+  await app.press("角色资料");
+  await app.press("模拟下载网络中断");
+  await app.waitFor("下载中断 · 查看原因");
+  expect(app.texts()).toContain("UID 数据空间");
+  expect(app.texts()).not.toContain("下载或安装失败：下载连接断开");
+  await app.press("下载中断 · 查看原因");
+  expect(texts()).toContain(`安装目录：${target}`);
+  expect(app.texts()).toContain("下载或安装失败：下载连接断开");
+  expect(app.texts()).toContain("已写入 40%（40 / 100 字节）");
+  await app.press("继续下载");
   await app.waitFor("正在下载并安装…");
   await app.press("重新打开启动器");
-  await app.press("游戏管理");
   await app.waitFor("有未完成的安装，等待手动继续");
+  expect(app.texts()).toContain("继续下载后将校验已下载的进度");
   await app.wait(5000);
   expect(app.texts()).toContain("继续下载");
-  expect(texts()).not.toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(app.texts()).not.toContain("暂停下载");
+  expect(app.texts()).not.toContain("普通启动");
 
   await app.press("继续下载");
+  await app.waitFor("已写入 40%（40 / 100 字节）");
+  await app.press("模拟下载完成");
   await app.waitFor("游戏下载并安装完成");
-  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  await app.press("普通启动");
+  expect(texts()).toContain(`请求启动：${target}`);
   await app.press("重新打开启动器");
   await app.press("游戏管理");
-  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain(`默认目录：${target}`);
   expect(texts()).not.toContain("继续下载");
-  await app.press("首页");
-  await app.press("普通启动");
-  expect(texts()).toContain("请求启动：E:/手动目录/Genshin Impact Game");
 });
 
 test("reports a competing first save and displays the account that won", async () => {

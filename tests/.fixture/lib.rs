@@ -14,6 +14,11 @@ use std::{
 const CONFIRMED_WITH_NEW_COOKIE: u32 = 7;
 const RENEWED_COOKIE: &str = "fixture-renewed-cookie";
 
+enum DownloadOutcome {
+    Interrupted,
+    Complete,
+}
+
 fn claimed(completion: Completion) -> SignInResult {
     SignInResult {
         completion,
@@ -41,7 +46,8 @@ struct Environment {
     fail_launch: Signal<bool>,
     launched: Signal<String>,
     install_target: Rc<RefCell<Option<PathBuf>>>,
-    install_attempts: Cell<u32>,
+    install_progress: Rc<Cell<u64>>,
+    install_outcome: Rc<Cell<Option<DownloadOutcome>>>,
     previous_install: RefCell<Option<InstallControl>>,
     installed: Rc<RefCell<Option<PathBuf>>>,
 }
@@ -250,28 +256,35 @@ impl LauncherEnvironment for Environment {
         {
             return Box::pin(async { Err("上次下载仍在运行".into()) });
         }
+        if parent.is_some() == self.install_target.borrow().is_some() {
+            return Box::pin(async { Err("下载目标与保存的任务不一致".into()) });
+        }
         self.previous_install.replace(Some(control.clone()));
         if let Some(parent) = parent {
             self.install_target
                 .replace(Some(parent.join("Genshin Impact Game")));
+            self.install_progress.set(1);
         }
-        let attempt = self.install_attempts.get() + 1;
-        self.install_attempts.set(attempt);
+        let progress = self.install_progress.clone();
+        let outcome = self.install_outcome.clone();
         let pending = self.install_target.clone();
         let installed = self.installed.clone();
         let selected = self.selected.clone();
         Box::pin(async move {
-            control.report(1, 100);
-            if attempt < 3 {
-                while !control.is_paused() {
-                    nsh_core::element::timer(std::time::Duration::from_millis(200)).await;
+            while !control.is_paused() {
+                control.report(progress.get(), 100);
+                match outcome.take() {
+                    Some(DownloadOutcome::Interrupted) => return Err("下载连接断开".into()),
+                    Some(DownloadOutcome::Complete) => {
+                        let path = pending.take();
+                        installed.replace(path.clone());
+                        selected.replace(path.clone());
+                        return Ok(path);
+                    }
+                    None => nsh_core::element::timer(Duration::from_millis(200)).await,
                 }
-                return Ok(None);
             }
-            let path = pending.take();
-            installed.replace(path.clone());
-            selected.replace(path.clone());
-            Ok(path)
+            Ok(None)
         })
     }
 }
@@ -307,7 +320,8 @@ pub fn Fixture() -> impl IntoElement {
         fail_launch: signal(false),
         launched: signal(String::new()),
         install_target: Rc::default(),
-        install_attempts: Cell::new(0),
+        install_progress: Rc::default(),
+        install_outcome: Rc::default(),
         previous_install: RefCell::new(None),
         installed: Rc::default(),
     });
@@ -326,6 +340,9 @@ pub fn Fixture() -> impl IntoElement {
     let suspended_seconds = environment.suspended_seconds;
     let sign_in_reply = environment.sign_in_reply;
     let sign_in_attempts = environment.sign_in_attempts;
+    let install_progress = environment.install_progress.clone();
+    let interrupted_install = environment.install_outcome.clone();
+    let completed_install = environment.install_outcome.clone();
     view()
         .flex_1()
         .child(
@@ -473,8 +490,30 @@ pub fn Fixture() -> impl IntoElement {
         )
         .child(
             view()
-                .on_press(move || remove_environment.directories.borrow_mut().clear())
-                .child(text("模拟安装已移除")),
+                .flex_row()
+                .gap_2()
+                .child(
+                    view()
+                        .on_press(move || remove_environment.directories.borrow_mut().clear())
+                        .child(text("模拟安装已移除")),
+                )
+                .child(
+                    view()
+                        .on_press(move || install_progress.set(40))
+                        .child(text("模拟下载进度更新")),
+                )
+                .child(
+                    view()
+                        .on_press(move || {
+                            interrupted_install.set(Some(DownloadOutcome::Interrupted))
+                        })
+                        .child(text("模拟下载网络中断")),
+                )
+                .child(
+                    view()
+                        .on_press(move || completed_install.set(Some(DownloadOutcome::Complete)))
+                        .child(text("模拟下载完成")),
+                ),
         )
         .child(
             view()

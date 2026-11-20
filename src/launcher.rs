@@ -1,6 +1,6 @@
 //! Application boundary shared by the native root and the isolated test host.
 
-use crate::game_install::{InstallControl, InstallOperation};
+use crate::game_install::{InstallControl, InstallOperation, InstallSession};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use nsh_core::element::input;
 use nsh_core::prelude::*;
@@ -169,6 +169,7 @@ const PAPER: AdaptiveColor = AdaptiveColor::rgb(0x00f4_f5ef, 0x0017_2420);
 const INK: AdaptiveColor = AdaptiveColor::rgb(0x0020_3832, 0x00f4_f5ef);
 const CONTROL: AdaptiveColor = AdaptiveColor::rgb(0x00e0_e8da, 0x002a_473d);
 const SIDEBAR_BACKGROUND: u32 = 0x0015_3e35;
+const SIDEBAR_HOVER_BACKGROUND: u32 = 0x002a_5849;
 
 static HOME_LANDSCAPE: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -212,6 +213,11 @@ impl Page {
 /// Renders the same launcher with either the Windows environment or a test host.
 pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let page = signal(Page::Home);
+    let game_panel = element_ref();
+    let open_install = move || {
+        page.set(Page::Game);
+        game_panel.scroll_to_offset(px(0.0), false);
+    };
     let state = signal(initial_state(environment.as_ref()));
     let (profile, profile_error) = match environment.load_profile() {
         Ok(profile) => (profile, None),
@@ -221,7 +227,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         ),
     };
     let profile = signal(profile);
-    let install = crate::game_install::controls(environment.clone(), move |directory| {
+    let install = InstallSession::new(environment.clone(), move |directory| {
         set_default(state, directory, "默认目录已保存");
     });
     let accounts = crate::accounts::accounts(environment.clone(), profile);
@@ -233,7 +239,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         .flex_row()
         .bg(PAPER)
         .text_color(INK)
-        .child(sidebar(page))
+        .child(sidebar(page, install.sidebar_status(open_install)))
         .child(
             view()
                 .flex_1()
@@ -242,16 +248,26 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                 .child(panel(
                     page,
                     Page::Home,
-                    home(page, state, environment.clone()),
+                    home(
+                        page,
+                        state,
+                        environment.clone(),
+                        install.clone(),
+                        open_install,
+                    ),
                 ))
-                .child(panel(
-                    page,
-                    Page::Game,
-                    view()
-                        .gap_4()
-                        .child(game_directory(environment, state))
-                        .child(install),
-                ))
+                .child(
+                    panel(
+                        page,
+                        Page::Game,
+                        view()
+                            .gap_4()
+                            .child(install.details())
+                            .child(game_directory(environment, state))
+                            .child(install.setup()),
+                    )
+                    .element_ref(&game_panel),
+                )
                 .child(panel(
                     page,
                     Page::Community,
@@ -272,7 +288,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         )
 }
 
-fn sidebar(page: Signal<Page>) -> View {
+fn sidebar(page: Signal<Page>, download_status: View) -> View {
     view()
         .w(|| {
             px(if compact_window() {
@@ -310,8 +326,9 @@ fn sidebar(page: Signal<Page>) -> View {
                         rgb(SIDEBAR_BACKGROUND)
                     }
                 })
-                .hover(|style| style.bg(rgb(0x002a_5849)))
+                .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
         }))
+        .child(download_status.hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND))))
 }
 
 fn narrow_window() -> bool {
@@ -322,7 +339,7 @@ fn compact_window() -> bool {
     window().width.0 < 340.0
 }
 
-fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> impl IntoElement {
+fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> Scroll {
     scroll()
         .flex_1()
         .style_when(move || page.get() != target, Styled::hidden)
@@ -337,7 +354,11 @@ fn home(
     page: Signal<Page>,
     state: Signal<InstallationState>,
     environment: Rc<dyn LauncherEnvironment>,
+    install: Rc<InstallSession>,
+    open_install: impl Fn() + Copy + 'static,
 ) -> impl IntoElement {
+    let install_status = install.home_status();
+    let offer_install = install.clone();
     view()
         .flex_row()
         .rounded(px(12.0))
@@ -379,7 +400,21 @@ fn home(
                             .py_3()
                     },
                 ))
-                .child(button("管理游戏", move || page.set(Page::Game))),
+                .child(button("管理游戏", move || page.set(Page::Game)))
+                .child(when(
+                    move || {
+                        state.with(|state| state.selected.is_none())
+                            && offer_install.can_offer_install()
+                    },
+                    move || {
+                        let picker = install.clone();
+                        button("选择安装位置", move || {
+                            open_install();
+                            picker.pick();
+                        })
+                    },
+                ))
+                .child(install_status),
         )
         .child(
             image(HOME_LANDSCAPE.as_str())
