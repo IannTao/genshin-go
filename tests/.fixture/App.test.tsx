@@ -6,8 +6,12 @@ test("navigates four launcher pages and launches from a reopened home without au
     .toEqual(["首页", "游戏管理", "米游社", "角色资料"]);
   expect(app.texts()).toContain("原神启动器");
   expect(app.texts()).not.toContain("普通启动");
-  await app.press("管理游戏");
+  expect(app.texts()).toContain("选择：C:/原神");
+  expect(app.texts()).toContain("选择：D:/原神");
   await app.press("选择：D:/原神");
+  expect(app.texts()).not.toContain("普通启动");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("普通启动");
   await app.press("角色资料");
   expect(app.texts()).toContain("UID 数据空间");
   expect(app.texts()).not.toContain("选择游戏目录");
@@ -193,7 +197,7 @@ test("pauses a new installation and waits for manual resume after reopening", as
   await app.press("游戏管理");
   const texts = () => app.texts().map(text => text.replaceAll("\\", "/"));
   await app.press("选择安装位置");
-  expect(texts()).toContain("安装目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain("安装目录：F:/新安装位置/Genshin Impact Game");
   await app.press("开始下载");
   await app.press("角色资料");
   await app.wait(1000);
@@ -209,18 +213,18 @@ test("pauses a new installation and waits for manual resume after reopening", as
   await app.waitFor("有未完成的安装，等待手动继续");
   await app.wait(5000);
   expect(app.texts()).toContain("继续下载");
-  expect(texts()).not.toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).not.toContain("默认目录：F:/新安装位置/Genshin Impact Game");
 
   await app.press("继续下载");
   await app.waitFor("游戏下载并安装完成");
-  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain("默认目录：F:/新安装位置/Genshin Impact Game");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
-  expect(texts()).toContain("默认目录：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain("默认目录：F:/新安装位置/Genshin Impact Game");
   expect(texts()).not.toContain("继续下载");
   await app.press("首页");
   await app.press("普通启动");
-  expect(texts()).toContain("请求启动：E:/手动目录/Genshin Impact Game");
+  expect(texts()).toContain("请求启动：F:/新安装位置/Genshin Impact Game");
 });
 
 test("reports a competing first save and displays the account that won", async () => {
@@ -561,8 +565,12 @@ test("retains the original account and UID when renewal cannot verify the same U
 test("chooses a discovered installation and keeps the default after reopening", async () => {
   const app = await open(".");
   await app.press("游戏管理");
+  expect(app.texts()).not.toContain("重新查找");
+  await app.press("更换目录");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   expect(app.texts()).toContain("默认目录：D:/原神");
+  expect(app.texts()).not.toContain("重新查找");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录：D:/原神");
@@ -576,8 +584,8 @@ test("chooses a discovered installation and keeps the default after reopening", 
 
 test("starts the game independently of saved MiYouShe authorization", async () => {
   const app = await open(".", { clock: {} });
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   await app.press("米游社");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
@@ -597,8 +605,10 @@ test("starts the game independently of saved MiYouShe authorization", async () =
 test("chooses a directory from the picker and can also enter a valid path", async () => {
   const app = await open(".");
   await app.press("游戏管理");
+  await app.press("更换目录");
   await app.press("选择游戏目录");
   expect(app.texts()).toContain("默认目录：E:/手动目录");
+  await app.press("更换目录");
   await app.type("game-directory", "D:/原神");
   await app.press("使用此目录");
   await app.press("重新打开启动器");
@@ -606,58 +616,99 @@ test("chooses a directory from the picker and can also enter a valid path", asyn
   expect(app.texts()).toContain("默认目录：D:/原神");
 });
 
-test("revalidates the default before launch when an installation disappears", async () => {
+test("rediscovers a moved installation and restores launch after reopening", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
-  await app.press("模拟安装已移除");
-  await app.press("首页");
+  await app.press("确认保存目录");
+  await app.press("模拟移动安装");
   await app.press("普通启动");
   expect(app.texts()).toContain("启动失败：目录已失效：不是国服官服游戏目录。请重新选择游戏目录。");
   expect(app.texts()).not.toContain("请求启动：D:/原神");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录已失效：不是国服官服游戏目录。请重新选择游戏目录。");
-  expect(app.texts()).toContain("尚未选择默认目录");
+  expect(app.texts()).toContain("已失效的默认目录：D:/原神");
+  await app.press("更换目录");
+  await app.press("重新查找");
+  expect(app.texts()).toContain("F:/已移动/原神");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("默认目录：F:/已移动/原神");
+  await app.press("重新打开启动器");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：F:/已移动/原神");
 });
 
 test("does not claim to save a new default when settings cannot be written", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：C:/原神");
+  await app.press("确认保存目录");
+  await app.press("游戏管理");
+  await app.press("更换目录");
   await app.press("模拟配置写入失败");
   await app.press("选择：D:/原神");
-  expect(app.texts()).toContain("无法选择目录：配置不可写");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("无法保存默认目录：配置不可写");
+  expect(app.texts()).toContain("默认目录：C:/原神");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录：C:/原神");
+  await app.press("首页");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：C:/原神");
 });
 
 test("reports a system launch failure without reporting success", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   await app.press("模拟系统启动失败");
-  await app.press("首页");
   await app.press("普通启动");
   expect(app.texts()).toContain("启动失败：系统拒绝启动");
   expect(app.texts()).not.toContain("已请求启动游戏");
 });
 
-test("gives installation guidance and blocks launch when no game exists", async () => {
+test("shows both options on an empty home and opens the existing directory picker", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
-  await app.press("模拟安装已移除");
-  await app.press("重新查找");
+  await app.press("模拟未自动发现安装");
+  await app.press("重新打开启动器");
   expect(app.texts()).toContain("未找到游戏。可选择已有游戏目录，或下载国服官服。");
-  await app.press("首页");
   expect(app.texts()).not.toContain("普通启动");
+  expect(app.texts()).toContain("下载安装");
+  await app.press("选择已有游戏");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：E:/手动目录");
+});
+
+test("opens the installation location picker from an empty home", async () => {
+  const app = await open(".");
+  await app.press("模拟安装已移除");
+  await app.press("重新打开启动器");
+  await app.press("下载安装");
+  await app.waitFor("开始下载");
+  expect(app.texts().map(text => text.replaceAll("\\", "/")))
+    .toContain("安装目录：F:/新安装位置/Genshin Impact Game");
+});
+
+test("shows the full path of a single installation before confirmation", async () => {
+  const app = await open(".", { width: 1040, height: 900 });
+  await app.press("模拟仅发现一处安装");
+  await app.press("重新打开启动器");
+  const path = String.raw`D:\Games\原神中文目录\GenshinImpactInstallationWithALongFolderName\Genshin Impact Game`;
+  expect(app.texts()).toContain(path);
+  expect(app.texts()).not.toContain("普通启动");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("普通启动");
+  await app.press("重新打开启动器");
+  await app.press("普通启动");
+  expect(app.texts()).toContain(`请求启动：${path}`);
 });
 
 test("rejects an invalid manual directory without replacing the saved default", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：C:/原神");
+  await app.press("确认保存目录");
+  await app.press("游戏管理");
+  await app.press("更换目录");
   await app.type("game-directory", "E:/not-a-game");
   await app.press("使用此目录");
   expect(app.texts()).toContain("无法选择目录：不是国服官服游戏目录");

@@ -72,11 +72,11 @@ struct InstallView {
     progress: Option<Progress>,
 }
 
-/// Renders download and installation controls for a launcher session.
+/// Returns the download controls and a shortcut to choose the installation location.
 pub(crate) fn controls(
     environment: Rc<dyn LauncherEnvironment>,
     on_installed: impl Fn(PathBuf) + 'static,
-) -> impl IntoElement {
+) -> (impl IntoElement, impl Fn() + 'static) {
     let enabled = environment.supports_install();
     let owner = Owner::current();
     let mut initial = InstallView::default();
@@ -108,7 +108,8 @@ pub(crate) fn controls(
         environment,
         on_installed,
     });
-    view().gap_2().child(dynamic(move || {
+    let home_picker = session.clone();
+    let controls = view().gap_2().child(dynamic(move || {
         if !enabled {
             return Vec::new();
         }
@@ -155,7 +156,8 @@ pub(crate) fn controls(
             }
         }
         items
-    }))
+    }));
+    (controls, move || home_picker.pick())
 }
 
 struct InstallSession {
@@ -234,6 +236,9 @@ impl InstallSession {
 
     fn pick(&self) {
         let state = self.state;
+        if state.with_untracked(|view| view.busy || view.picking || view.pending.is_some()) {
+            return;
+        }
         state.update(|view| view.picking = true);
         let choice = self.environment.choose_install_parent();
         self.owner.run(|| {

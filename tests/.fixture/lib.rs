@@ -235,6 +235,9 @@ impl LauncherEnvironment for Environment {
     fn choose_directory(&self) -> DirectoryChoice {
         Box::pin(async { Ok(Some("E:/手动目录".into())) })
     }
+    fn choose_install_parent(&self) -> DirectoryChoice {
+        Box::pin(async { Ok(Some("F:/新安装位置".into())) })
+    }
     fn supports_install(&self) -> bool {
         true
     }
@@ -312,6 +315,9 @@ pub fn Fixture() -> impl IntoElement {
         installed: Rc::default(),
     });
     let remove_environment = environment.clone();
+    let undiscoverable_environment = environment.clone();
+    let single_environment = environment.clone();
+    let move_environment = environment.clone();
     let other_launcher = environment.clone();
     let qr_status = environment.qr_status;
     let uid_lookup = environment.uid_lookup;
@@ -471,10 +477,34 @@ pub fn Fixture() -> impl IntoElement {
                 .on_press(move || generation.update(|g| *g += 1))
                 .child(text("重新打开启动器")),
         )
+        .child(view().flex_row().flex_wrap().gap_2()
         .child(
             view()
                 .on_press(move || remove_environment.directories.borrow_mut().clear())
                 .child(text("模拟安装已移除")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    undiscoverable_environment.directories.replace(vec!["E:/手动目录".into()]);
+                })
+                .child(text("模拟未自动发现安装")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    single_environment.directories.replace(vec![
+                        r"D:\Games\原神中文目录\GenshinImpactInstallationWithALongFolderName\Genshin Impact Game".into(),
+                    ]);
+                })
+                .child(text("模拟仅发现一处安装")),
+        )
+        .child(
+            view()
+                .on_press(move || {
+                    move_environment.directories.replace(vec!["F:/已移动/原神".into()]);
+                })
+                .child(text("模拟移动安装")),
         )
         .child(
             view()
@@ -485,6 +515,7 @@ pub fn Fixture() -> impl IntoElement {
             view()
                 .on_press(move || fail_launch.set(true))
                 .child(text("模拟系统启动失败")),
+        )
         )
         .child(text(move || launched.get()))
         .child(dynamic(move || {

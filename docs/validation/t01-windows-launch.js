@@ -1,10 +1,11 @@
 await app.setViewport(480, 640);
-await app.press("游戏管理");
 console.log(JSON.stringify(app.texts()));
-const installation = app.texts().find((text) => text.startsWith("选择："));
-if (!installation) throw new Error("未自动发现有效国服安装");
-await app.press(installation);
-await app.press("首页");
+if (!app.texts().includes("普通启动")) {
+  if (!app.texts().includes("确认保存目录")) throw new Error("未自动发现有效国服安装");
+  const installation = app.texts().find((text) => text.startsWith("选择："));
+  if (installation) await app.press(installation);
+  await app.press("确认保存目录");
+}
 console.log(JSON.stringify(app.texts()));
 await app.screenshot("target/t01-windows.png");
 await app.press("普通启动");

@@ -1,6 +1,6 @@
 # Genshin-Go
 
-On Windows, use **首页** to launch the game once a valid default directory is saved. **管理游戏** opens **游戏管理** for directory selection and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
+On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
 ## Windows account authorization
 
@@ -28,11 +28,17 @@ Use **重试社区签到** in the calendar after a failure. If 米游社 require
 
 The Rust root discovers existing installations from the current-user and machine
 uninstall registry entries (both registry views), legacy launcher `config.ini`
-paths, and common Program Files locations. Discovery is bounded; installations
-elsewhere can be selected with **选择游戏目录** or entered in the path field.
-Select a discovered installation to save it as the default. The selected game
-directory must contain `YuanShen.exe`, `YuanShen_Data`, and an official-channel
-`config.ini`; choosing a legacy launcher directory also resolves its game path.
+paths, and common Program Files locations. The home page shows the complete path
+of a single candidate or lets you choose among multiple candidates. Click
+**确认保存目录** to set the default and reveal **普通启动**. If automatic discovery
+finds no candidates, use **选择已有游戏** to browse or **下载安装** to choose a new
+installation location.
+
+**游戏管理** shows the current default directory. Use **更换目录** to find moved
+installations with **重新查找**, browse with **选择游戏目录**, or enter a path and
+click **使用此目录**. A valid game directory contains `YuanShen.exe`,
+`YuanShen_Data`, and an official-channel `config.ini`. Choosing a legacy launcher
+directory also resolves its game path. A failed save keeps the previous default.
 
 The default is stored atomically in `%LOCALAPPDATA%/Genshin-Go/settings.json`.
 The app validates it again on reopening and before **普通启动**. Ordinary launch
