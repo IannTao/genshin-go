@@ -1,6 +1,7 @@
 //! Account authorization UI; external effects use the application's environment.
 use crate::launcher::{LauncherEnvironment, button};
 use crate::profile::{Profile, VerifiedAccount};
+use nsh_core::element::{AnyElement, Memo};
 use nsh_core::prelude::*;
 use std::{future::Future, pin::Pin, rc::Rc};
 
@@ -72,6 +73,20 @@ enum Scan {
     Retry,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthorizationEntry {
+    Account,
+    SignIn,
+}
+
+#[derive(Clone, Copy)]
+struct AuthorizationUi {
+    message: Signal<String>,
+    scan: Signal<Scan>,
+    entry: Signal<AuthorizationEntry>,
+    generation: Signal<u64>,
+}
+
 fn qr_image(url: &str) -> Result<String, String> {
     use std::fmt::Write;
     let qr = qrcodegen::QrCode::encode_text(url, qrcodegen::QrCodeEcc::Medium)
@@ -103,49 +118,148 @@ fn qr_element(url: &str) -> impl IntoElement + use<> {
     }
 }
 
-/// Renders `MiHoYo` authorization controls in the Rust root.
-pub(crate) fn accounts(
+/// Renders the community page for the saved `MiHoYo` account.
+pub(crate) fn community_page(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
 ) -> impl IntoElement {
     let message = signal(String::new());
     let scan = signal(Scan::Idle);
+    let entry = signal(AuthorizationEntry::Account);
     let generation = signal(0_u64);
-    let checking = signal(false);
+    let authorization = AuthorizationUi {
+        message,
+        scan,
+        entry,
+        generation,
+    };
     let check_environment = environment.clone();
-    let start = Rc::new(move || {
+    let start = Rc::new(move |origin| {
+        entry.set(origin);
         start_authorization(environment.clone(), generation, scan, message, profile);
     });
+    let begin = start.clone();
+    let renew_button = move |id: &str, origin| {
+        let begin = begin.clone();
+        button(format!("重新扫码：{id}"), move || begin(origin)).into_element()
+    };
+    let renew_sign_in = renew_button.clone();
+    let (today, history, needs_renewal) =
+        crate::community_sign_in::controls(check_environment.clone(), profile, move |id| {
+            renew_sign_in(id, AuthorizationEntry::SignIn)
+        });
     let refresh = start.clone();
+    let feedback = move || {
+        let refresh = refresh.clone();
+        view()
+            .gap_2()
+            .child(text(move || message.get()))
+            .child(dynamic(move || match scan.get() {
+                Scan::Ready(url) => Some(qr_element(&url)),
+                Scan::Idle | Scan::Creating | Scan::Verifying | Scan::Retry => None,
+            }))
+            .child(when(
+                move || !matches!(scan.get(), Scan::Idle),
+                move || {
+                    let refresh = refresh.clone();
+                    view()
+                        .gap_2()
+                        .child(button("刷新二维码", move || {
+                            refresh(entry.get_untracked());
+                        }))
+                        .child(button("取消扫码", move || {
+                            generation.update(|g| *g += 1);
+                            scan.set(Scan::Idle);
+                            message.set("已取消扫码".into());
+                        }))
+                },
+            ))
+    };
     view()
         .gap_2()
-        .child(text("米哈游账号"))
-        .child(dynamic(move || {
-            let start = start.clone();
-            let Some(account) = profile.get().account else {
-                return view()
-                    .child(text("尚未保存米哈游账号"))
-                    .child(button("扫码添加米哈游账号", move || start()))
-                    .into_element();
-            };
-            let id = account.account_id.clone();
-            let environment = check_environment.clone();
-            let remove = environment.clone();
+        .child(
+            text(move || {
+                profile.with(|profile| {
+                    profile.account.as_ref().map_or_else(
+                        || "米哈游账号".into(),
+                        |account| format!("米哈游账号：{}", account.account_id),
+                    )
+                })
+            })
+            .text_size(px(24.0))
+            .font_weight(FontWeight::BOLD),
+        )
+        .child(when(
+            move || profile.with(|profile| profile.account.is_none()),
+            move || {
+                let start = start.clone();
+                view().child(text("尚未保存米哈游账号")).child(button(
+                    "扫码添加米哈游账号",
+                    move || {
+                        start(AuthorizationEntry::Account);
+                    },
+                ))
+            },
+        ))
+        .child(today)
+        .child(when(
+            move || entry.get() == AuthorizationEntry::SignIn,
+            feedback.clone(),
+        ))
+        .child(history)
+        .child(authorization_controls(
+            check_environment,
+            profile,
+            authorization,
+            needs_renewal,
+            move |id| renew_button(id, AuthorizationEntry::Account),
+        ))
+        .child(when(
+            move || entry.get() == AuthorizationEntry::Account,
+            feedback,
+        ))
+}
+
+fn authorization_controls(
+    environment: Rc<dyn LauncherEnvironment>,
+    profile: Signal<Profile>,
+    authorization: AuthorizationUi,
+    needs_renewal: Memo<bool>,
+    renew_button: impl Fn(&str) -> AnyElement + 'static,
+) -> impl IntoElement {
+    let AuthorizationUi {
+        message,
+        scan,
+        entry,
+        generation,
+    } = authorization;
+    let checking = signal(false);
+    dynamic(move || {
+        let account = profile.get().account?;
+        let id = account.account_id.clone();
+        let environment = environment.clone();
+        let remove = environment.clone();
+        Some(
             view()
                 .gap_2()
-                .child(text(format!("米哈游账号：{id}")))
                 .child(text(format!("已验证游戏 UID：{}", account.uid)))
-                .child(button(format!("重新扫码：{id}"), move || start()))
+                .child((!needs_renewal.get()).then(|| renew_button(&id)))
                 .child(button(format!("移除账号：{id}"), move || match remove
                     .remove_authorization(&account)
                 {
                     Ok(state) => {
                         generation.update(|g| *g += 1);
                         scan.set(Scan::Idle);
+                        entry.set(AuthorizationEntry::Account);
                         profile.set(state);
                         message.set("已移除米游社授权，已保留 UID 数据".into());
                     }
-                    Err(error) => message.set(format!("移除账号失败：{error}")),
+                    Err(error) => {
+                        if scan.get_untracked() == Scan::Idle {
+                            entry.set(AuthorizationEntry::Account);
+                        }
+                        message.set(format!("移除账号失败：{error}"));
+                    }
                 }))
                 .child(button(format!("检查授权：{id}"), move || {
                     if checking.get_untracked()
@@ -155,6 +269,7 @@ pub(crate) fn accounts(
                     }
                     checking.set(true);
                     scan.set(Scan::Idle);
+                    entry.set(AuthorizationEntry::Account);
                     let current = generation.get_untracked();
                     let environment = environment.clone();
                     let id = id.clone();
@@ -171,27 +286,9 @@ pub(crate) fn accounts(
                         }
                     });
                 }))
-                .into_element()
-        }))
-        .child(text(move || message.get()))
-        .child(dynamic(move || match scan.get() {
-            Scan::Ready(url) => Some(qr_element(&url)),
-            Scan::Idle | Scan::Creating | Scan::Verifying | Scan::Retry => None,
-        }))
-        .child(when(
-            move || !matches!(scan.get(), Scan::Idle),
-            move || {
-                let refresh = refresh.clone();
-                view()
-                    .gap_2()
-                    .child(button("刷新二维码", move || refresh()))
-                    .child(button("取消扫码", move || {
-                        generation.update(|g| *g += 1);
-                        scan.set(Scan::Idle);
-                        message.set("已取消扫码".into());
-                    }))
-            },
-        ))
+                .into_element(),
+        )
+    })
 }
 
 fn start_authorization(

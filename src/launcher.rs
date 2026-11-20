@@ -257,8 +257,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         crate::game_install::controls(environment.clone(), move |path| {
             set_default(state, path);
         });
-    let accounts = crate::accounts::accounts(environment.clone(), profile);
-    let sign_in = crate::community_sign_in::controls(environment.clone(), profile);
+    let community = crate::accounts::community_page(environment.clone(), profile);
     let uid_spaces = crate::profile::spaces(environment, profile);
     view()
         .flex_1()
@@ -288,8 +287,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     view()
                         .gap_4()
                         .child(profile_error.clone().map(text))
-                        .child(accounts)
-                        .child(sign_in),
+                        .child(community),
                 ))
                 .child(panel(
                     page,

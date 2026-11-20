@@ -29,14 +29,23 @@ test("navigates four launcher pages and launches from a reopened home without au
   expect(app.texts()).toContain("请求启动：D:/原神");
 });
 
-test("shows the actual reward for today's community sign-in in the calendar", async () => {
+test("shows the account, today's sign-in and the reward calendar before authorization controls", async () => {
   const app = await open(".", { clock: {} });
   await app.press("米游社");
+  await app.press("模拟当天签到尚未完成");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitFor("社区签到奖励日历");
   await app.waitFor("1970-01-02 · 待处理");
   await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  const expected = [
+    "米哈游账号：10001",
+    "社区签到：成功",
+    "社区签到奖励日历",
+    "1970-01-02 · 已领取 · 30 米游币",
+    "检查授权：10001",
+  ];
+  expect(app.texts().filter(text => expected.includes(text))).toEqual(expected);
   expect(app.texts()).not.toContain("重试社区签到");
 });
 
@@ -51,7 +60,7 @@ test("automatically checks community sign-in for the saved account when reopenin
   await app.press("米游社");
   await app.waitFor("社区签到：待处理");
   await app.waitFor("社区签到：已签到");
-  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).toContain("米哈游账号：10001");
   expect(app.texts()).not.toContain("重试社区签到");
 });
 
@@ -78,7 +87,7 @@ test("checks community sign-in again after a new day and a same-day resume", asy
   await app.press("模拟当天签到尚未完成");
   await app.press("模拟休眠恢复");
   await app.waitFor("社区签到：成功");
-  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).toContain("米哈游账号：10001");
   await app.press("角色资料");
   expect(app.texts()).toContain("当前游戏 UID：987654321");
   await app.press("米游社");
@@ -99,8 +108,13 @@ test("bounds community sign-in timeout retries and lets the user retry unfinishe
   await app.waitFor("社区签到：待处理");
   expect(app.texts()).toContain("1970-01-02 · 待处理");
   await app.wait(7000);
-  expect(app.texts()).toContain("社区签到：失败，网络超时，请重试");
-  expect(app.texts()).toContain("1970-01-02 · 失败");
+  const recovery = [
+    "社区签到：失败，网络超时，请重试",
+    "1970-01-02 · 失败",
+    "重试社区签到",
+    "检查授权：10001",
+  ];
+  expect(app.texts().filter(text => recovery.includes(text))).toEqual(recovery);
   expect(app.texts()).toContain("签到请求次数：3");
   await app.press("模拟当天签到尚未完成");
   await app.press("重试社区签到");
@@ -119,6 +133,20 @@ test("keeps the reward unconfirmed when only community sign-in is confirmed", as
   await app.waitFor("1970-01-02 · 已签到 · 领取待确认");
   expect(app.texts()).not.toContain("1970-01-02 · 已领取 · 30 米游币");
   expect(app.texts()).not.toContain("重试社区签到");
+  await app.press("角色资料");
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  await app.wait(2000);
+  await app.press("米游社");
+  const pending = [
+    "米哈游账号：10001",
+    "1970-01-02 · 已签到 · 领取待确认",
+    "检查奖励领取",
+    "检查授权：10001",
+  ];
+  expect(app.texts().filter(text => pending.includes(text))).toEqual(pending);
+  expect(app.texts()).toContain("签到请求次数：1");
   await app.press("模拟当天签到尚未完成");
   await app.press("检查奖励领取");
   await app.waitFor("签到请求次数：2");
@@ -130,7 +158,7 @@ test("keeps the reward unconfirmed when only community sign-in is confirmed", as
   expect(app.texts()).not.toContain("检查奖励领取");
 });
 
-test("does not carry a reward check into the next day's blocked sign-in", async () => {
+test("does not carry a verification retry into the next day's blocked sign-in", async () => {
   const app = await open(".", { clock: {} });
   await app.press("米游社");
   await app.press("模拟签到已完成但奖励未确认");
@@ -140,9 +168,10 @@ test("does not carry a reward check into the next day's blocked sign-in", async 
   await app.press("模拟签到需要人工验证");
   await app.press("检查奖励领取");
   await app.waitFor("社区签到：失败，请在米游社完成验证或签到后重试");
+  expect(app.texts()).not.toContain("检查奖励领取");
 
   await app.press("模拟当天签到尚未完成");
-  await app.press("检查奖励领取");
+  await app.press("重试社区签到");
   await app.press("模拟签到跨日");
   await app.waitFor("1970-01-03 · 待处理");
   await app.wait(4000);
@@ -166,7 +195,10 @@ test("waits for the user when community sign-in requires verification or a new s
 
   await app.press("模拟签到授权失效");
   await app.press("重试社区签到");
-  await app.waitFor("社区签到：失败，签到授权不可用，请重新扫码");
+  const expired = "社区签到：失败，签到授权不可用，请重新扫码";
+  await app.waitFor(expired);
+  const recovery = [expired, "重新扫码：10001", "已验证游戏 UID：123456789"];
+  expect(app.texts().filter(text => recovery.includes(text))).toEqual(recovery);
   expect(app.texts()).not.toContain("重试社区签到");
   await app.press("模拟签到跨日");
   await app.wait(4000);
@@ -174,6 +206,9 @@ test("waits for the user when community sign-in requires verification or a new s
 
   await app.press("模拟当天签到尚未完成");
   await app.press("重新扫码：10001");
+  await app.waitFor("id:authorization-qr");
+  const scan = ["重新扫码：10001", "等待扫描：请使用米游社扫码", "1970-01-02 · 失败"];
+  expect(app.texts().filter(text => scan.includes(text))).toEqual(scan);
   await app.press("模拟扫码确认新凭据");
   await app.waitFor("社区签到：成功");
   expect(app.texts()).toContain("签到请求次数：3");
