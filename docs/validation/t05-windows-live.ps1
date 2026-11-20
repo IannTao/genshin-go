@@ -31,10 +31,13 @@ await app.waitFor(account);
 await app.waitFor(verified);
 await app.press("角色资料");
 await app.waitFor("当前游戏 UID：" + uid);
+if (app.texts().some(text => text.startsWith("切换至 UID：")))
+  throw new Error("复扫后不应新增其他 UID 数据空间");
+await app.press("资料管理");
+app.onDialog(() => "取消");
 await app.press("删除历史记录");
-await app.waitFor("选择 UID：" + uid);
-if (app.texts().filter(text => text === "选择 UID：" + uid).length !== 1)
-  throw new Error("原 UID 数据空间应只出现一次");
+if (app.dialogs().at(-1)?.title !== `删除 UID ${uid} 的历史记录？`)
+  throw new Error("确认框应显示原 UID");
 '@ | nsh test nsh.json --target windows
     if ($LASTEXITCODE -ne 0) { throw "原生扫码复验失败（退出码 $LASTEXITCODE）" }
 

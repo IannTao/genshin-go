@@ -13,11 +13,11 @@ test("navigates four launcher pages and launches from a reopened home without au
   await app.press("确认保存目录");
   expect(app.texts()).toContain("普通启动");
   await app.press("角色资料");
-  expect(app.texts()).toContain("UID 数据空间");
+  expect(app.texts()).toContain("创建 UID 数据空间");
   expect(app.texts()).not.toContain("选择游戏目录");
   await app.press("米游社");
   expect(app.texts()).toContain("尚未保存米哈游账号");
-  expect(app.texts()).not.toContain("UID 数据空间");
+  expect(app.texts()).not.toContain("创建 UID 数据空间");
   await app.press("首页");
   expect(app.texts()).toContain("普通启动");
 
@@ -250,7 +250,7 @@ test("follows one download across pages and waits for manual resume after reopen
   await app.waitFor("下载中 · 1%");
   await app.press("模拟下载进度更新");
   await app.waitFor("下载中 · 40%");
-  expect(app.texts()).toContain("UID 数据空间");
+  expect(app.texts()).toContain("创建 UID 数据空间");
   await app.press("下载中 · 40%");
   expect(texts()).toContain(`安装目录：${target}`);
   expect(app.texts()).toContain("已写入 40%（40 / 100 字节）");
@@ -261,7 +261,7 @@ test("follows one download across pages and waits for manual resume after reopen
   await app.press("角色资料");
   await app.press("模拟下载网络中断");
   await app.waitFor("下载中断 · 查看原因");
-  expect(app.texts()).toContain("UID 数据空间");
+  expect(app.texts()).toContain("创建 UID 数据空间");
   expect(app.texts()).not.toContain("下载或安装失败：下载连接断开");
   await app.press("下载中断 · 查看原因");
   expect(texts()).toContain(`安装目录：${target}`);
@@ -314,6 +314,7 @@ test("reports a competing first save and displays the account that won", async (
 test("creates and switches independent game UID spaces without signing in", async () => {
   const app = await open(".");
   await app.press("角色资料");
+  expect(app.texts()).not.toContain("资料管理");
   await app.type("game-uid", "123456789");
   await app.press("创建 UID 数据空间");
   await app.type("game-uid", "987654321");
@@ -324,6 +325,9 @@ test("creates and switches independent game UID spaces without signing in", asyn
   await app.press("角色资料");
   expect(app.texts()).toContain("当前游戏 UID：123456789");
   expect(app.texts()).toContain("切换至 UID：987654321");
+  for (const tab of ["抽卡记录", "成就进度", "背包仓库", "养成计划"]) {
+    expect(app.texts()).not.toContain(tab);
+  }
   await app.press("米游社");
   expect(app.texts()).toContain("尚未保存米哈游账号");
 });
@@ -445,7 +449,7 @@ test("removes the old authorization and restores only the new account with both 
   expect(app.texts()).toContain("已验证游戏 UID：987654321");
 });
 
-test("shows the UID scope before confirming history deletion", async () => {
+test("confirms history deletion for the current UID and preserves spaces and authorization", async () => {
   const app = await open(".", { clock: {} });
   await app.press("角色资料");
   await app.type("game-uid", "987654321");
@@ -456,20 +460,24 @@ test("shows the UID scope before confirming history deletion", async () => {
   await app.waitUntil(() => app.texts().includes("米游社授权已保存"));
 
   await app.press("角色资料");
+  expect(app.texts()).not.toContain("删除历史记录");
+  await app.press("资料管理");
+  app.onDialog(() => "取消");
   await app.press("删除历史记录");
-  expect(app.texts()).toContain("选择 UID：123456789");
-  expect(app.texts()).toContain("选择 UID：987654321");
-  await app.press("选择 UID：987654321");
-  expect(app.texts()).toContain("本次删除涉及的 UID：987654321");
-  expect(app.texts()).not.toContain("本次删除涉及的 UID：123456789");
-  await app.press("取消删除历史记录");
+  expect(app.dialogs()[0]).toMatchObject({
+    title: "删除 UID 987654321 的历史记录？",
+    message: "将清除该 UID 所有类别的本地历史。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+    buttons: ["取消", "确认删除 UID：987654321"],
+  });
   expect(app.texts()).not.toContain("已清除 UID 987654321 的本机历史记录");
-  expect(app.texts()).not.toContain("确认删除 UID：987654321");
 
-  await app.press("选择 UID：123456789");
-  expect(app.texts()).toContain("本次删除涉及的 UID：123456789");
-  await app.press("确认删除 UID：123456789");
-  expect(app.texts()).toContain("已清除 UID 123456789 的本机历史记录");
+  await app.press("切换至 UID：123456789");
+  expect(app.texts()).toContain("当前游戏 UID：123456789");
+  await app.press("切换至 UID：987654321");
+  await app.press("资料管理");
+  app.onDialog(() => "确认删除 UID：987654321");
+  await app.press("删除历史记录");
+  await app.waitFor("已清除 UID 987654321 的本机历史记录");
   await app.press("重新打开启动器");
   await app.press("米游社");
   expect(app.texts()).toContain("已验证游戏 UID：123456789");

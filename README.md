@@ -14,7 +14,9 @@ The launcher assigns one device ID to the local database and reuses it for refre
 
 Upgrading from the multi-account version removes its saved authorizations. You can switch between existing UID data spaces before scanning again. To verify the upgrade with isolated Windows data, run `./docs/validation/issue-32-windows.ps1` in PowerShell 7.2 or later. Add `-LiveScan` to verify a real scan and two restarts. The script removes its temporary directory after a successful run. Use `-KeepData` to retain it for inspection. A failed run leaves the directory in place for diagnosis.
 
-In **管理授权**, choose **移除账号** and confirm the displayed account to remove its 米游社 authorization. Automatic sign-in requires authorization again. The UID spaces and their records stay available. Scanning again verifies the account's game UID and links it to the existing space. To clear local records, open **删除历史记录**, select a UID, and confirm the UID displayed. This keeps the UID space and any saved authorization available.
+In **管理授权**, choose **移除账号** and confirm the displayed account to remove its 米游社 authorization. Automatic sign-in requires authorization again. The UID spaces and their records stay available. Scanning again verifies the account's game UID and links it to the existing space.
+
+To clear local records, select the UID in **角色资料**, open **资料管理**, and choose **删除历史记录**. Confirm the full UID displayed to clear every category of local history for that UID. The UID space, other UIDs' records, and 米游社 authorization stay available. In the Windows confirmation dialog, Enter defaults to **取消**.
 
 ## Windows community sign-in
 
@@ -73,6 +75,8 @@ The script runs formatting, Clippy, the offline ticket synchronization tests,
 and the NSH checks and tests for both the root project and the interaction fixture.
 From `tests/.fixture`, run `nsh test .windows/authorization.test.ts --target windows`
 to verify that Enter cancels account removal in the Windows window.
+Run `nsh test .windows/history.test.ts --target windows` to verify that Enter
+cancels history deletion.
 Run the [live account validation](docs/validation/t02.md#重跑验证) separately.
 
 Windows storage tests create their own temporary databases and use DPAPI under
