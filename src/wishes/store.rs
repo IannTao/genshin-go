@@ -1,4 +1,5 @@
-use super::archive::{Group, Wish, encode};
+use super::archive::{Group, Pool, Wish, encode};
+use super::statistics::{self, PoolStatistics};
 use crate::account_store::{database_error, open};
 use crate::native_environment::atomic_write;
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -165,6 +166,11 @@ pub(super) fn page(path: &Path, uid: &str, index: i64) -> Result<(i64, Vec<Wish>
 
 fn all(db: &Connection, uid: &str) -> Result<Vec<Wish>, String> {
     records(db, uid, -1, 0)
+}
+
+/// Reads and summarizes every saved draw for the selected UID.
+pub(super) fn statistics(path: &Path, uid: &str) -> Result<BTreeMap<Pool, PoolStatistics>, String> {
+    statistics::summarize(&all(&open(path)?, uid)?)
 }
 
 fn records(db: &Connection, uid: &str, limit: i64, offset: i64) -> Result<Vec<Wish>, String> {

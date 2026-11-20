@@ -1,4 +1,4 @@
-use super::archive::{Archive, Group};
+use super::archive::{Archive, Group, Pool};
 use super::store::{self, ImportPlan, PAGE_SIZE};
 use crate::launcher::button;
 use crate::profile::Profile;
@@ -273,7 +273,39 @@ pub(super) fn section(
         .child(controls.file_input(profile))
         .child(controls.loaded(profile))
         .child(text(move || controls.message.get()))
+        .child(statistics(database.clone(), profile, revision))
         .child(history(database, profile, revision))
+}
+
+fn statistics(
+    database: Rc<PathBuf>,
+    profile: Signal<Profile>,
+    revision: Signal<u64>,
+) -> impl IntoElement {
+    dynamic(move || {
+        revision.get();
+        let uid = profile.get().active_uid?;
+        let heading = view()
+            .gap_2()
+            .child(text(format!("UID {uid} 的祈愿统计")).font_weight(FontWeight::BOLD));
+        match store::statistics(&database, &uid) {
+            Ok(pools) if pools.is_empty() => None,
+            Ok(pools) => Some(
+                heading
+                    .child(text("保底估算要求最近一次五星至今的同池记录完整。UIGF 无法确认是否漏抽或漏导入。"))
+                    .children(pools.into_iter().map(|(pool, stats)| {
+                        view()
+                            .child(text(stats.rarity_label(pool)))
+                            .child(text(stats.pity_label(pool)))
+                            .child((pool == Pool::ChronicledAndLightrace).then(|| {
+                                text("集录与溯光共享保底，估算需要两个祈愿的完整近期记录。")
+                            }))
+                            .into_element()
+                    })),
+            ),
+            Err(error) => Some(heading.child(text(error))),
+        }
+    })
 }
 
 fn history(

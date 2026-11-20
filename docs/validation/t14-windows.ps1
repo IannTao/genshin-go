@@ -203,6 +203,78 @@ try {
   await app.press("切换至 UID：987654321");
   await app.waitFor("共 1 条 · 第 1 页 · 时间 UTC");
 '@
+
+    $paths.statistics = Join-Path $data 'statistics.json'
+    function New-StatWish($Id, $Pool, $Rank, $Time = '2025-10-10 00:00:00') {
+        $item = switch ($Rank) {
+            '5' { '10000003' }
+            '4' { '10000034' }
+            default { '11301' }
+        }
+        $wish = @{
+            id = [string]$Id; item_id = $item; time = $Time
+            gacha_type = $Pool; uigf_gacha_type = $(if ($Pool -eq '400') { '301' } else { $Pool })
+        }
+        if ($null -ne $Rank) { $wish.rank_type = $Rank }
+        return $wish
+    }
+    $statistics = @(
+        (New-StatWish 100 '301' '3')
+        (New-StatWish 99 '400' '5')
+        (New-StatWish 98 '301' 'invalid')
+        (New-StatWish 101 '400' '4')
+        (New-StatWish 102 '302' '3')
+        (New-StatWish 103 '500' '5')
+        (New-StatWish 104 '500' $null)
+        (New-StatWish 105 '500' '3')
+        (New-StatWish 106 '100' '4')
+    )
+    $statistics += @(200..289 | ForEach-Object { New-StatWish $_ '200' '3' })
+    Write-Uigf $paths.statistics 'v4.2' @(@{ uid = '234567890'; timezone = 8; list = $statistics })
+
+    Invoke-WishTest $paths @'
+  await create("234567890");
+  await app.waitFor("暂无祈愿记录");
+  await read(paths.statistics);
+  await app.waitFor("导入至 UID 234567890：新增 99，重复 0，冲突 0");
+  await app.press("备份并确认导入");
+  await app.waitFor("UID 234567890 的祈愿统计");
+  const expected = [
+    "角色活动祈愿 · 已导入 4 抽 · 5 星 1 · 4 星 1 · 3 星 1 · 星级未知 1",
+    "五星保底估算 · 已累计 2 / 90 抽 · 最多再抽 88 次",
+    "武器活动祈愿 · 已导入 1 抽 · 5 星 0 · 4 星 0 · 3 星 1 · 星级未知 0",
+    "五星保底进度未知（80 抽上限）· 缺少五星记录 · 已导入末尾 1 抽未出五星",
+    "集录／溯光祈愿 · 已导入 3 抽 · 5 星 1 · 4 星 0 · 3 星 1 · 星级未知 1",
+    "五星保底进度未知（90 抽上限）· 近期有星级未知记录 · 已导入末尾 1 抽未出五星",
+    "集录与溯光共享保底，估算需要两个祈愿的完整近期记录。",
+    "常驻祈愿 · 已导入 90 抽 · 5 星 0 · 4 星 0 · 3 星 90 · 星级未知 0",
+    "五星保底进度未知（90 抽上限）· 已导入末尾记录与保底规则不符",
+    "新手祈愿 · 已导入 1 抽 · 5 星 0 · 4 星 1 · 3 星 0 · 星级未知 0",
+    "新手祈愿最多 20 抽，两次十连各有角色保底",
+  ];
+  for (const line of expected) await app.waitFor(line);
+  const summaryStart = app.texts().indexOf(expected[0]);
+  expect(app.texts().slice(summaryStart, summaryStart + expected.length)).toEqual(expected);
+  await app.waitFor("保底估算要求最近一次五星至今的同池记录完整。UIGF 无法确认是否漏抽或漏导入。");
+  await app.press("下一页");
+  await app.waitFor("共 99 条 · 第 2 页 · 时间 UTC");
+  for (const line of expected) expect(app.texts()).toContain(line);
+  await read(paths.statistics);
+  await app.waitFor("导入至 UID 234567890：新增 0，重复 99，冲突 0");
+  expect(app.texts()).not.toContain("备份并确认导入");
+  for (const line of expected) expect(app.texts()).toContain(line);
+
+  await app.press("切换至 UID：987654321");
+  await app.waitFor("UID 987654321 的祈愿统计");
+  await app.waitFor("五星保底估算 · 已累计 0 / 90 抽 · 最多再抽 90 次");
+  for (const line of expected) expect(app.texts()).not.toContain(line);
+  await app.press("切换至 UID：234567890");
+  await app.press("资料管理");
+  app.onDialog(() => "确认删除 UID：234567890");
+  await app.press("删除历史记录");
+  await app.waitFor("暂无祈愿记录");
+  for (const line of expected) expect(app.texts()).not.toContain(line);
+'@
 } finally {
     $env:GENSHIN_GO_DATA_DIR = $previousDataDir
     Remove-Item -LiteralPath $testFile -ErrorAction SilentlyContinue

@@ -1,5 +1,6 @@
 //! UIGF archive handling, storage and launcher controls for wish records.
 mod archive;
+mod statistics;
 mod store;
 mod ui;
 

@@ -99,6 +99,38 @@ struct RawGroup {
     list: Vec<Object<Wish>>,
 }
 
+/// Identifies wish pools that accumulate separate guarantee counts.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum Pool {
+    Character,
+    Weapon,
+    ChronicledAndLightrace,
+    Standard,
+    Beginner,
+}
+
+impl Pool {
+    /// Returns the display name for the shared pool.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Character => "角色活动祈愿",
+            Self::Weapon => "武器活动祈愿",
+            Self::ChronicledAndLightrace => "集录／溯光祈愿",
+            Self::Standard => "常驻祈愿",
+            Self::Beginner => "新手祈愿",
+        }
+    }
+}
+
+/// Represents the rarity explicitly recorded by the UIGF archive.
+#[derive(Clone, Copy)]
+pub(super) enum Rarity {
+    Three,
+    Four,
+    Five,
+    Unknown,
+}
+
 /// Represents a single original game wish with its time normalized to UTC.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub(super) struct Wish {
@@ -136,15 +168,33 @@ pub(super) struct Wish {
 }
 
 impl Wish {
-    fn pool(&self) -> Option<(&'static str, &'static str)> {
-        Some(match self.gacha_type.as_str() {
-            "100" => ("100", "新手祈愿"),
-            "200" => ("200", "常驻祈愿"),
-            "301" | "400" => ("301", "角色活动祈愿"),
-            "302" => ("302", "武器活动祈愿"),
-            "500" => ("500", "集录祈愿"),
+    fn pool_code(&self) -> &str {
+        match self.gacha_type.as_str() {
+            "400" => "301",
+            code => code,
+        }
+    }
+
+    /// Returns the shared pool for the raw game banner code.
+    pub(super) fn pool(&self) -> Option<Pool> {
+        Some(match self.pool_code() {
+            "100" => Pool::Beginner,
+            "200" => Pool::Standard,
+            "301" => Pool::Character,
+            "302" => Pool::Weapon,
+            "500" => Pool::ChronicledAndLightrace,
             _ => return None,
         })
+    }
+
+    /// Interprets the archived star rating, preserving missing or invalid values as unknown.
+    pub(super) fn rarity(&self) -> Rarity {
+        match self.rank_type.as_deref() {
+            Some("3") => Rarity::Three,
+            Some("4") => Rarity::Four,
+            Some("5") => Rarity::Five,
+            _ => Rarity::Unknown,
+        }
     }
 
     fn normalize(&mut self, timezone: i32) -> Result<(), String> {
@@ -159,8 +209,8 @@ impl Wish {
         if !is_decimal(&self.item_id) {
             return Err("item_id 必须是数字字符串".into());
         }
-        let (expected_pool, _) = self.pool().ok_or("gacha_type 无效")?;
-        if self.uigf_gacha_type != expected_pool {
+        self.pool().ok_or("gacha_type 无效")?;
+        if self.uigf_gacha_type != self.pool_code() {
             return Err("uigf_gacha_type 与 gacha_type 不匹配".into());
         }
         let local = NaiveDateTime::parse_from_str(&self.time, TIME_FORMAT)
@@ -208,9 +258,10 @@ impl Wish {
 
     /// Formats the draw for browsing, using the item ID when the name is absent.
     pub(super) fn label(&self) -> String {
-        let pool = self
-            .pool()
-            .map_or(self.gacha_type.as_str(), |(_, label)| label);
+        let pool = match self.pool() {
+            Some(pool) => pool.label(),
+            None => self.gacha_type.as_str(),
+        };
         let name = self
             .name
             .as_deref()
