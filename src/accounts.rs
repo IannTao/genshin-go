@@ -104,6 +104,12 @@ fn qr_element(url: &str) -> impl IntoElement + use<> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AuthorizationEntry {
+    Account,
+    SignIn,
+}
+
 #[derive(Clone, Copy)]
 struct AccountControls {
     owner: Owner,
@@ -111,13 +117,14 @@ struct AccountControls {
     message: Signal<String>,
     scan: Signal<Scan>,
     target: Signal<Option<VerifiedAccount>>,
+    entry: Signal<AuthorizationEntry>,
     generation: Signal<u64>,
     checking: Signal<bool>,
     managing: Signal<bool>,
 }
 
-/// Renders `MiHoYo` authorization controls in the Rust root.
-pub(crate) fn accounts(
+/// Renders daily community sign-in and account authorization on the community page.
+pub(crate) fn community_page(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
 ) -> impl IntoElement {
@@ -127,16 +134,48 @@ pub(crate) fn accounts(
         message: signal(String::new()),
         scan: signal(Scan::Idle),
         target: signal(None),
+        entry: signal(AuthorizationEntry::Account),
         generation: signal(0),
         checking: signal(false),
         managing: signal(false),
     };
     let scan = controls.scan;
+    let entry = controls.entry;
     let managing = controls.managing;
+    let sign_in_environment = environment.clone();
+    let (today, history, needs_renewal) =
+        crate::community_sign_in::controls(environment.clone(), profile, move |id| {
+            let environment = sign_in_environment.clone();
+            button(format!("重新扫码：{id}"), move || {
+                if scan.get_untracked() == Scan::Idle {
+                    entry.set(AuthorizationEntry::SignIn);
+                    controls.start(environment.clone());
+                }
+            })
+            .into_element()
+        });
     let refresh_environment = environment.clone();
+    let feedback = move || controls.feedback(refresh_environment.clone());
     view()
         .gap_2()
-        .child(text("米哈游账号"))
+        .child(
+            text(move || {
+                profile.with(|profile| {
+                    profile.account.as_ref().map_or_else(
+                        || "米哈游账号".into(),
+                        |account| format!("米哈游账号：{}", account.account_id),
+                    )
+                })
+            })
+            .text_size(px(24.0))
+            .font_weight(FontWeight::BOLD),
+        )
+        .child(today)
+        .child(when(
+            move || entry.get() == AuthorizationEntry::SignIn,
+            feedback.clone(),
+        ))
+        .child(history)
         .child(dynamic(move || {
             let idle = scan.get() == Scan::Idle;
             let start = environment.clone();
@@ -146,19 +185,19 @@ pub(crate) fn accounts(
                     .child(text("尚未保存米哈游账号"))
                     .child(idle.then(|| {
                         button("扫码添加米哈游账号", move || {
+                            entry.set(AuthorizationEntry::Account);
                             controls.start(start.clone());
                         })
-                    }))
-                    .into_element();
+                    }));
             };
             let id = account.account_id.clone();
             let environment = environment.clone();
             view()
                 .gap_2()
-                .child(text(format!("米哈游账号：{id}")))
                 .child(text(format!("已验证游戏 UID：{}", account.uid)))
-                .child(idle.then(|| {
+                .child((idle && !needs_renewal.get()).then(|| {
                     button(format!("重新扫码：{id}"), move || {
+                        entry.set(AuthorizationEntry::Account);
                         controls.start(start.clone());
                     })
                 }))
@@ -171,35 +210,42 @@ pub(crate) fn accounts(
                     move || idle && managing.get(),
                     move || controls.management(environment.clone(), account.clone()),
                 ))
-                .into_element()
-        }))
-        .child(dynamic(move || {
-            (scan.get() != Scan::Idle)
-                .then(|| controls.target.get())
-                .flatten()
-                .map(|account| text(format!("正在续期米哈游账号：{}", account.account_id)))
-        }))
-        .child(text(move || controls.message.get()))
-        .child(dynamic(move || match scan.get() {
-            Scan::Ready(url) => Some(qr_element(&url)),
-            Scan::Idle | Scan::Creating | Scan::Verifying | Scan::Retry => None,
         }))
         .child(when(
-            move || scan.get() == Scan::Retry,
-            move || {
-                let environment = refresh_environment.clone();
-                button("刷新二维码", move || {
-                    controls.start(environment.clone());
-                })
-            },
-        ))
-        .child(when(
-            move || scan.get() != Scan::Idle,
-            move || button("取消扫码", move || controls.cancel_scan()),
+            move || entry.get() == AuthorizationEntry::Account,
+            feedback,
         ))
 }
 
 impl AccountControls {
+    fn feedback(self, environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
+        let scan = self.scan;
+        view()
+            .gap_2()
+            .child(dynamic(move || {
+                (scan.get() != Scan::Idle)
+                    .then(|| self.target.get())
+                    .flatten()
+                    .map(|account| text(format!("正在续期米哈游账号：{}", account.account_id)))
+            }))
+            .child(text(move || self.message.get()))
+            .child(dynamic(move || match scan.get() {
+                Scan::Ready(url) => Some(qr_element(&url)),
+                Scan::Idle | Scan::Creating | Scan::Verifying | Scan::Retry => None,
+            }))
+            .child(when(
+                move || scan.get() == Scan::Retry,
+                move || {
+                    let environment = environment.clone();
+                    button("刷新二维码", move || self.start(environment.clone()))
+                },
+            ))
+            .child(when(
+                move || scan.get() != Scan::Idle,
+                move || button("取消扫码", move || self.cancel_scan()),
+            ))
+    }
+
     fn start(self, environment: Rc<dyn LauncherEnvironment>) {
         if self.scan.get_untracked() == Scan::Idle {
             self.target.set(self.profile.get_untracked().account);
@@ -244,6 +290,7 @@ impl AccountControls {
         if self.checking.get_untracked() {
             return;
         }
+        self.entry.set(AuthorizationEntry::Account);
         self.checking.set(true);
         let current = self.generation.get_untracked();
         self.message.set(format!("正在检查账号 {id} 授权…"));
@@ -278,6 +325,7 @@ impl AccountControls {
                 {
                     return;
                 }
+                self.entry.set(AuthorizationEntry::Account);
                 match environment.remove_authorization(&account) {
                     Ok(state) => {
                         self.generation.update(|g| *g += 1);

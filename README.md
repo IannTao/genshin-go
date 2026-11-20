@@ -1,6 +1,6 @@
 # Genshin-Go
 
-On Windows, use **首页** to launch the game once a valid default directory is saved. **管理游戏** opens **游戏管理** for directory selection and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
+On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
 ## Windows account authorization
 
@@ -20,19 +20,25 @@ In **管理授权**, choose **移除账号** and confirm the displayed account t
 
 The sole saved 米哈游账号 is the sign-in account. The launcher shows **社区签到** and checks for the day's unfinished community sign-in when opened, at Beijing midnight, and after Windows resumes. Switch UID data spaces independently. The launcher only runs checks while it is open.
 
-The **社区签到奖励日历** shows today's result and results checked during the current session in the past six Beijing dates. It displays the reward amount from the 米游社 task definition when 米游社 confirms delivery. If sign-in succeeds and delivery is still unconfirmed, use **检查奖励领取** to refresh the reward status.
+Open **米游社** to see the current 米哈游账号, today's sign-in result, and the **社区签到奖励日历** at the top of the page. The calendar also shows results checked during the current session in the past six Beijing dates. It displays the reward amount from the 米游社 task definition when 米游社 confirms delivery. If sign-in succeeds and delivery is still unconfirmed, use **检查奖励领取** next to today's result to refresh the reward status.
 
-Use **重试社区签到** in the calendar after a failure. If 米游社 requires verification, complete verification or sign-in in the app, then retry. If the launcher asks you to scan again, use **重新扫码** with the same account. Older authorizations may need a fresh scan to supply the separately encrypted community sign-in session. See the [T11 sign-in validation](docs/validation/t11.md) and [T13 calendar validation](docs/validation/t13.md).
+Use **重试社区签到** next to today's result after a failure. If 米游社 requires verification, complete verification or sign-in in the app, then retry. If the launcher asks you to scan again, use **重新扫码** next to the result to renew the same account. Older authorizations may need a fresh scan to supply the separately encrypted community sign-in session. See the [T11 sign-in validation](docs/validation/t11.md) and [T13 calendar validation](docs/validation/t13.md).
 
 ## Windows launcher: existing official mainland-China installation
 
 The Rust root discovers existing installations from the current-user and machine
 uninstall registry entries (both registry views), legacy launcher `config.ini`
-paths, and common Program Files locations. Discovery is bounded; installations
-elsewhere can be selected with **选择游戏目录** or entered in the path field.
-Select a discovered installation to save it as the default. The selected game
-directory must contain `YuanShen.exe`, `YuanShen_Data`, and an official-channel
-`config.ini`; choosing a legacy launcher directory also resolves its game path.
+paths, and common Program Files locations. The home page shows the complete path
+of a single candidate or lets you choose among multiple candidates. Click
+**确认保存目录** to set the default and reveal **普通启动**. If automatic discovery
+finds no candidates, use **选择已有游戏** to browse or **下载安装** to choose a new
+installation location.
+
+**游戏管理** shows the current default directory. Use **更换目录** to find moved
+installations with **重新查找**, browse with **选择游戏目录**, or enter a path and
+click **使用此目录**. A valid game directory contains `YuanShen.exe`,
+`YuanShen_Data`, and an official-channel `config.ini`. Choosing a legacy launcher
+directory also resolves its game path. A failed save keeps the previous default.
 
 The default is stored atomically in `%LOCALAPPDATA%/Genshin-Go/settings.json`.
 The app validates it again on reopening and before **普通启动**. Ordinary launch

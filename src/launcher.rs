@@ -97,17 +97,44 @@ pub trait LauncherEnvironment {
 }
 
 #[derive(Clone, PartialEq)]
-struct InstallationState {
-    directories: Vec<PathBuf>,
-    selected: Option<PathBuf>,
-    message: String,
+enum SavedDirectory {
+    Valid(PathBuf),
+    Invalid(PathBuf),
 }
 
-fn initial_state(environment: &dyn LauncherEnvironment) -> InstallationState {
+#[derive(Clone, PartialEq)]
+struct InstallationState {
+    directories: Vec<PathBuf>,
+    candidate: Option<PathBuf>,
+    saved: Option<SavedDirectory>,
+    message: String,
+    editing: bool,
+}
+
+impl InstallationState {
+    fn launch_directory(&self) -> Option<&Path> {
+        match &self.saved {
+            Some(SavedDirectory::Valid(path)) => Some(path),
+            _ => None,
+        }
+    }
+
+    fn chosen_candidate(&self) -> Option<&Path> {
+        if let [only] = self.directories.as_slice() {
+            Some(only)
+        } else {
+            self.candidate.as_deref()
+        }
+    }
+}
+
+fn find_installations(environment: &dyn LauncherEnvironment) -> InstallationState {
     let mut state = InstallationState {
         directories: Vec::new(),
-        selected: None,
+        candidate: None,
+        saved: None,
         message: String::new(),
+        editing: false,
     };
     match environment.discover() {
         Ok(paths) => state.directories = paths,
@@ -115,19 +142,17 @@ fn initial_state(environment: &dyn LauncherEnvironment) -> InstallationState {
     }
     match environment.load_default() {
         Ok(Some(directory)) => match environment.validate(&directory) {
-            Ok(directory) => {
-                if !state.directories.contains(&directory) {
-                    state.directories.push(directory.clone());
-                }
-                state.selected = Some(directory);
+            Ok(directory) => state.saved = Some(SavedDirectory::Valid(directory)),
+            Err(error) => {
+                state.saved = Some(SavedDirectory::Invalid(directory));
+                state.message = format!("默认目录已失效：{error}。请重新选择游戏目录。");
             }
-            Err(error) => state.message = format!("默认目录已失效：{error}。请重新选择游戏目录。"),
         },
         Ok(None) => {}
         Err(error) => state.message = format!("读取默认目录失败：{error}。请重新选择游戏目录。"),
     }
     if state.message.is_empty() {
-        state.message = if state.selected.is_some() {
+        state.message = if state.launch_directory().is_some() {
             "默认目录已载入"
         } else if state.directories.is_empty() {
             if environment.supports_install() {
@@ -144,23 +169,25 @@ fn initial_state(environment: &dyn LauncherEnvironment) -> InstallationState {
 }
 
 fn select(environment: &dyn LauncherEnvironment, state: Signal<InstallationState>, path: &Path) {
-    let result = environment.validate(path).and_then(|directory| {
-        environment.save_default(&directory)?;
-        Ok(directory)
-    });
-    match result {
-        Ok(directory) => set_default(state, directory, "默认目录已保存"),
-        Err(error) => state.update(|s| s.message = format!("无法选择目录：{error}")),
+    let directory = match environment.validate(path) {
+        Ok(directory) => directory,
+        Err(error) => {
+            state.update(|s| s.message = format!("无法选择目录：{error}"));
+            return;
+        }
+    };
+    match environment.save_default(&directory) {
+        Ok(()) => set_default(state, directory),
+        Err(error) => state.update(|s| s.message = format!("无法保存默认目录：{error}")),
     }
 }
 
-fn set_default(state: Signal<InstallationState>, directory: PathBuf, message: &str) {
+fn set_default(state: Signal<InstallationState>, directory: PathBuf) {
     state.update(|s| {
-        if !s.directories.contains(&directory) {
-            s.directories.push(directory.clone());
-        }
-        s.selected = Some(directory);
-        s.message = message.into();
+        s.saved = Some(SavedDirectory::Valid(directory));
+        s.candidate = None;
+        s.message = "默认目录已保存".into();
+        s.editing = false;
     });
 }
 
@@ -218,7 +245,12 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         page.set(Page::Game);
         game_panel.scroll_to_offset(px(0.0), false);
     };
-    let state = signal(initial_state(environment.as_ref()));
+    let state = signal(find_installations(environment.as_ref()));
+    let directory = DirectoryControls {
+        environment: environment.clone(),
+        state,
+        picking: signal(false),
+    };
     let (profile, profile_error) = match environment.load_profile() {
         Ok(profile) => (profile, None),
         Err(error) => (
@@ -227,12 +259,9 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         ),
     };
     let profile = signal(profile);
-    let install = InstallSession::new(environment.clone(), move |directory| {
-        set_default(state, directory, "默认目录已保存");
-    });
-    let accounts = crate::accounts::accounts(environment.clone(), profile);
-    let sign_in = crate::community_sign_in::controls(environment.clone(), profile);
-    let uid_spaces = crate::profile::spaces(environment.clone(), profile);
+    let install = InstallSession::new(environment.clone(), move |path| set_default(state, path));
+    let community = crate::accounts::community_page(environment.clone(), profile);
+    let uid_spaces = crate::profile::spaces(environment, profile);
     view()
         .flex_1()
         .min_h(px(0.0))
@@ -248,13 +277,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                 .child(panel(
                     page,
                     Page::Home,
-                    home(
-                        page,
-                        state,
-                        environment.clone(),
-                        install.clone(),
-                        open_install,
-                    ),
+                    home(page, &directory, &install, open_install),
                 ))
                 .child(
                     panel(
@@ -263,7 +286,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                         view()
                             .gap_4()
                             .child(install.details())
-                            .child(game_directory(environment, state))
+                            .child(directory.management())
                             .child(install.setup()),
                     )
                     .element_ref(&game_panel),
@@ -274,8 +297,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     view()
                         .gap_4()
                         .child(profile_error.clone().map(text))
-                        .child(accounts)
-                        .child(sign_in),
+                        .child(community),
                 ))
                 .child(panel(
                     page,
@@ -352,13 +374,11 @@ fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> Scroll 
 
 fn home(
     page: Signal<Page>,
-    state: Signal<InstallationState>,
-    environment: Rc<dyn LauncherEnvironment>,
-    install: Rc<InstallSession>,
+    directory: &DirectoryControls,
+    install: &Rc<InstallSession>,
     open_install: impl Fn() + Copy + 'static,
-) -> impl IntoElement {
-    let install_status = install.home_status();
-    let offer_install = install.clone();
+) -> View {
+    let state = directory.state;
     view()
         .flex_row()
         .rounded(px(12.0))
@@ -366,7 +386,7 @@ fn home(
         .bg(AdaptiveColor::rgb(0x00e5_ecdb, 0x0025_3b32))
         .child(
             view()
-                .w(move || px((window().width.0 * 0.32).clamp(202.0, 332.0)))
+                .w(move || px((window().width.0 * 0.32).clamp(236.0, 332.0)))
                 .max_w(relative(1.0))
                 .flex_shrink(0.0)
                 .min_h(|| px(if narrow_window() { 260.0 } else { 356.0 }))
@@ -389,32 +409,9 @@ fn home(
                         .font_weight(FontWeight::BOLD),
                 )
                 .child(text(move || state.with(|state| state.message.clone())))
-                .child(when(
-                    move || state.with(|state| state.selected.is_some()),
-                    move || {
-                        let environment = environment.clone();
-                        action_button("普通启动", move || launch(environment.as_ref(), state))
-                            .bg(ACCENT)
-                            .text_color(white())
-                            .px_4()
-                            .py_3()
-                    },
-                ))
+                .child(directory.home_actions(install, open_install))
                 .child(button("管理游戏", move || page.set(Page::Game)))
-                .child(when(
-                    move || {
-                        state.with(|state| state.selected.is_none())
-                            && offer_install.can_offer_install()
-                    },
-                    move || {
-                        let picker = install.clone();
-                        button("选择安装位置", move || {
-                            open_install();
-                            picker.pick();
-                        })
-                    },
-                ))
-                .child(install_status),
+                .child(install.home_status()),
         )
         .child(
             image(HOME_LANDSCAPE.as_str())
@@ -425,14 +422,17 @@ fn home(
 }
 
 fn launch(environment: &dyn LauncherEnvironment, state: Signal<InstallationState>) {
-    let Some(path) = state.with_untracked(|state| state.selected.clone()) else {
+    let Some(path) = state.with_untracked(|state| state.launch_directory().map(Path::to_path_buf))
+    else {
         return;
     };
     let directory = match environment.validate(&path) {
         Ok(directory) => directory,
         Err(error) => {
             state.update(|state| {
-                state.selected = None;
+                state.directories.retain(|directory| directory != &path);
+                state.candidate = None;
+                state.saved = Some(SavedDirectory::Invalid(path));
                 state.message = format!("启动失败：目录已失效：{error}。请重新选择游戏目录。");
             });
             return;
@@ -445,79 +445,191 @@ fn launch(environment: &dyn LauncherEnvironment, state: Signal<InstallationState
     state.update(|state| state.message = message);
 }
 
-fn game_directory(
+#[derive(Clone)]
+struct DirectoryControls {
     environment: Rc<dyn LauncherEnvironment>,
     state: Signal<InstallationState>,
-) -> impl IntoElement {
-    let manual = signal(String::new());
-    let picking = signal(false);
-    let choose_environment = environment.clone();
-    let path_environment = environment.clone();
-    let refresh_environment = environment.clone();
-    view()
-        .gap_2()
-        .child(
-            text("游戏目录")
-                .text_size(px(24.0))
-                .font_weight(FontWeight::BOLD),
-        )
-        .child(text(move || state.with(|state| state.message.clone())))
-        .child(text(move || {
-            state.get().selected.map_or_else(
-                || "尚未选择默认目录".into(),
-                |p| format!("默认目录：{}", p.display()),
+    picking: Signal<bool>,
+}
+
+impl DirectoryControls {
+    fn home_actions(
+        &self,
+        install: &Rc<InstallSession>,
+        open_install: impl Fn() + Copy + 'static,
+    ) -> View {
+        let state = self.state;
+        let environment = self.environment.clone();
+        let ready = move || state.with(|s| s.launch_directory().is_some());
+        let picker = install.clone();
+        let supports_install = self.environment.supports_install();
+        view()
+            .w_full()
+            .min_w(px(0.0))
+            .items_start()
+            .child(
+                action_button("普通启动", move || launch(environment.as_ref(), state))
+                    .bg(ACCENT)
+                    .text_color(white())
+                    .px_4()
+                    .py_3()
+                    .style_when(move || !ready(), Styled::hidden),
             )
-        }))
-        .child(view().gap_2().child(dynamic(move || {
-            state
-                .get()
-                .directories
-                .into_iter()
-                .map(|path| {
-                    let environment = environment.clone();
-                    button(format!("选择：{}", path.display()), move || {
-                        select(environment.as_ref(), state, &path);
+            .child(self.candidates().style_when(ready, Styled::hidden))
+            .child(
+                view()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_2()
+                    .style_when(
+                        move || ready() || state.with(|s| !s.directories.is_empty()),
+                        Styled::hidden,
+                    )
+                    .child(self.directory_picker("选择已有游戏"))
+                    .child(supports_install.then(|| {
+                        button("下载安装", move || {
+                            open_install();
+                            if picker.can_offer_install() {
+                                picker.pick();
+                            }
+                        })
+                    })),
+            )
+    }
+
+    fn candidates(&self) -> View {
+        let state = self.state;
+        let environment = self.environment.clone();
+        view()
+            .w_full()
+            .min_w(px(0.0))
+            .gap_2()
+            .items_start()
+            .style_when(
+                move || state.with(|s| s.directories.is_empty()),
+                Styled::hidden,
+            )
+            .child(dynamic(move || {
+                let directories = state.with(|s| s.directories.clone());
+                if let [only] = directories.as_slice() {
+                    return vec![text(only.display().to_string()).w_full().into_element()];
+                }
+                directories
+                    .into_iter()
+                    .map(|path| {
+                        let selected_path = path.clone();
+                        action_button(format!("选择：{}", path.display()), move || {
+                            state.update(|s| s.candidate = Some(path.clone()));
+                        })
+                        .w_full()
+                        .accessibility_state(move || AccessibilityState {
+                            selected: state.with(|s| s.candidate.as_ref() == Some(&selected_path)),
+                            ..Default::default()
+                        })
+                        .bg(CONTROL)
+                        .text_color(INK)
+                        .selected(|style| style.bg(ACCENT).text_color(white()))
+                        .into_element()
                     })
-                    .into_element()
+                    .collect::<Vec<_>>()
+            }))
+            .child(
+                action_button("确认保存目录", move || {
+                    if let Some(path) =
+                        state.with_untracked(|s| s.chosen_candidate().map(Path::to_path_buf))
+                    {
+                        select(environment.as_ref(), state, &path);
+                    }
                 })
-                .collect::<Vec<_>>()
-        })))
-        .child(button("重新查找", move || {
-            state.set(initial_state(refresh_environment.as_ref()));
-        }))
-        .child(
-            input()
-                .test_id("game-directory")
-                .label("游戏目录")
-                .h_10()
-                .px_3()
-                .bg(CONTROL)
-                .placeholder("游戏目录（含 YuanShen.exe）")
-                .value(move || manual.get())
-                .on_change(move |value: &str| manual.set(value.to_owned())),
-        )
-        .child(button("使用此目录", move || {
-            select(
-                path_environment.as_ref(),
-                state,
-                Path::new(manual.get().trim().trim_matches('"')),
-            );
-        }))
-        .child(button("选择游戏目录", move || {
+                .disabled(move || state.with(|s| s.chosen_candidate().is_none()))
+                .bg(ACCENT)
+                .text_color(white())
+                .disabled_style(|style| style.bg(CONTROL).text_color(INK)),
+            )
+    }
+
+    fn management(&self) -> View {
+        let state = self.state;
+        let manual = signal(String::new());
+        let refresh_environment = self.environment.clone();
+        let path_environment = self.environment.clone();
+        view()
+            .gap_2()
+            .child(
+                text("游戏目录")
+                    .text_size(px(24.0))
+                    .font_weight(FontWeight::BOLD),
+            )
+            .child(text(move || {
+                state.with(|s| match &s.saved {
+                    Some(SavedDirectory::Valid(path)) => format!("默认目录：{}", path.display()),
+                    Some(SavedDirectory::Invalid(path)) => {
+                        format!("已失效的默认目录：{}", path.display())
+                    }
+                    None => "尚未选择默认目录".into(),
+                })
+            }))
+            .child(text(move || state.with(|s| s.message.clone())))
+            .child(button("更换目录", move || {
+                state.update(|s| s.editing = !s.editing);
+            }))
+            .child(
+                view()
+                    .gap_2()
+                    .style_when(move || state.with(|s| !s.editing), Styled::hidden)
+                    .child(button("重新查找", move || {
+                        let mut refreshed = find_installations(refresh_environment.as_ref());
+                        refreshed.editing = true;
+                        state.set(refreshed);
+                    }))
+                    .child(self.candidates())
+                    .child(self.directory_picker("选择游戏目录"))
+                    .child(
+                        input()
+                            .test_id("game-directory")
+                            .label("游戏目录")
+                            .h_10()
+                            .px_3()
+                            .bg(CONTROL)
+                            .placeholder("游戏目录（含 YuanShen.exe）")
+                            .value(move || manual.get())
+                            .on_change(move |value: &str| manual.set(value.to_owned())),
+                    )
+                    .child(button("使用此目录", move || {
+                        select(
+                            path_environment.as_ref(),
+                            state,
+                            Path::new(manual.get().trim().trim_matches('"')),
+                        );
+                    })),
+            )
+    }
+
+    fn directory_picker(&self, label: &'static str) -> impl IntoElement {
+        let Self {
+            environment,
+            state,
+            picking,
+        } = self.clone();
+        action_button(label, move || {
             if picking.get_untracked() {
                 return;
             }
             picking.set(true);
-            let environment = choose_environment.clone();
+            let environment = environment.clone();
             spawn(async move {
                 match environment.choose_directory().await {
                     Ok(Some(path)) => select(environment.as_ref(), state, &path),
                     Ok(None) => {}
                     Err(error) => state.update(|s| {
-                        s.message = format!("目录选择失败：{error}。也可在上方输入路径。");
+                        s.message = format!("目录选择失败：{error}。可在游戏管理页手动输入路径。");
                     }),
                 }
                 picking.set(false);
             });
-        }))
+        })
+        .bg(CONTROL)
+        .text_color(INK)
+        .disabled(move || picking.get())
+    }
 }

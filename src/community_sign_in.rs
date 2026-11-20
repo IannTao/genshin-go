@@ -4,7 +4,7 @@ use crate::{
     profile::{Profile, VerifiedAccount},
 };
 use nsh_core::{
-    element::{computed, effect, timer},
+    element::{AnyElement, Memo, computed, effect, timer},
     prelude::*,
 };
 use std::{collections::BTreeMap, future::Future, pin::Pin, rc::Rc, time::Duration};
@@ -109,19 +109,20 @@ impl Calendar {
         )
     }
 
+    fn needs_renewal(&self) -> bool {
+        self.blocked == Some(Failure::Authorization)
+    }
+
     fn retry_label(&self) -> Option<&'static str> {
-        if self.blocked == Some(Failure::Authorization) {
-            return None;
-        }
-        match self.today() {
-            Status::Complete(result)
+        match (&self.blocked, self.today()) {
+            (Some(Failure::Authorization), _) => None,
+            (Some(Failure::Verification), _) | (_, Status::Failed(_)) => Some("重试社区签到"),
+            (_, Status::Complete(result))
                 if !result.reward_claimed || result.reward_points.is_none() =>
             {
                 Some("检查奖励领取")
             }
-            Status::Failed(_) => Some("重试社区签到"),
-            Status::Pending if self.blocked.is_some() => Some("重试社区签到"),
-            Status::Complete(_) | Status::Pending => None,
+            _ => None,
         }
     }
 
@@ -143,26 +144,25 @@ impl Calendar {
             .retain(|saved, _| (day.saturating_sub(6)..=day).contains(saved));
     }
 
-    fn rows(&self) -> impl Iterator<Item = String> + '_ {
-        std::iter::once((self.day, self.today()))
-            .chain(
-                self.entries
-                    .range(..self.day)
-                    .rev()
-                    .map(|(&day, status)| (day, status)),
-            )
-            .filter_map(|(day, status)| {
-                let date = chrono::NaiveDate::from_epoch_days(i32::try_from(day).ok()?)?;
-                Some(format!("{date} · {}", status.reward_label()))
-            })
+    fn history_rows(&self) -> impl Iterator<Item = String> + '_ {
+        self.entries
+            .range(..self.day)
+            .rev()
+            .filter_map(|(&day, status)| calendar_row(day, status))
     }
 }
 
-/// Shows the reward calendar for the saved account's community sign-in.
+fn calendar_row(day: u64, status: &Status) -> Option<String> {
+    let date = chrono::NaiveDate::from_epoch_days(i32::try_from(day).ok()?)?;
+    Some(format!("{date} · {}", status.reward_label()))
+}
+
+/// Starts community sign-in and returns today's controls, history and renewal state.
 pub(crate) fn controls(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
-) -> impl IntoElement {
+    renew_button: impl Fn(&str) -> AnyElement + Clone + 'static,
+) -> (impl IntoElement, impl IntoElement, Memo<bool>) {
     let account = computed(move || profile.get().account);
     let calendar = signal(Calendar::default());
     let retry = signal(None);
@@ -179,38 +179,40 @@ pub(crate) fn controls(
         });
         spawn(run(environment.clone(), account, clock, calendar, retry));
     });
-    when(
-        move || supported && account.get().is_some(),
-        move || {
-            view()
-                .gap_2()
-                .child(text(move || {
-                    account.get().map_or_else(String::new, |saved| {
-                        format!("签到账号：{}", saved.account_id)
-                    })
-                }))
-                .child(text("社区签到奖励日历").text_size(px(18.0)))
-                .child(text("北京时间"))
-                .child(dynamic(move || {
-                    calendar.with(|calendar| {
-                        calendar
-                            .rows()
-                            .map(|row| text(row).into_element())
-                            .collect::<Vec<_>>()
-                    })
-                }))
-                .child(text(move || calendar.with(Calendar::status_label)))
-                .child(dynamic(move || {
-                    calendar
-                        .with(|calendar| calendar.retry_label().map(|label| (calendar.day, label)))
-                        .map(|(day, label)| {
-                            button(label, move || retry.set(Some(day))).into_element()
-                        })
-                        .into_iter()
-                        .collect::<Vec<_>>()
-                }))
-        },
-    )
+    let visible = move || supported && account.get().is_some();
+    let needs_renewal = computed(move || visible() && calendar.with(Calendar::needs_renewal));
+    let today = when(visible, move || {
+        let renew_button = renew_button.clone();
+        view()
+            .gap_2()
+            .child(text(move || calendar.with(Calendar::status_label)))
+            .child(text("社区签到奖励日历").text_size(px(18.0)))
+            .child(text("北京时间"))
+            .child(dynamic(move || {
+                calendar
+                    .with(|calendar| calendar_row(calendar.day, calendar.today()))
+                    .map(text)
+            }))
+            .child(dynamic(move || {
+                if needs_renewal.get() {
+                    return account.get().map(|saved| renew_button(&saved.account_id));
+                }
+                calendar
+                    .with(|calendar| calendar.retry_label().map(|label| (calendar.day, label)))
+                    .map(|(day, label)| button(label, move || retry.set(Some(day))).into_element())
+            }))
+    });
+    let history = when(visible, move || {
+        view().gap_2().child(dynamic(move || {
+            calendar.with(|calendar| {
+                calendar
+                    .history_rows()
+                    .map(|row| text(row).into_element())
+                    .collect::<Vec<_>>()
+            })
+        }))
+    });
+    (today, history, needs_renewal)
 }
 
 async fn run(

@@ -6,8 +6,12 @@ test("navigates four launcher pages and launches from a reopened home without au
     .toEqual(["首页", "游戏管理", "米游社", "角色资料"]);
   expect(app.texts()).toContain("原神启动器");
   expect(app.texts()).not.toContain("普通启动");
-  await app.press("管理游戏");
+  expect(app.texts()).toContain("选择：C:/原神");
+  expect(app.texts()).toContain("选择：D:/原神");
   await app.press("选择：D:/原神");
+  expect(app.texts()).not.toContain("普通启动");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("普通启动");
   await app.press("角色资料");
   expect(app.texts()).toContain("UID 数据空间");
   expect(app.texts()).not.toContain("选择游戏目录");
@@ -25,14 +29,23 @@ test("navigates four launcher pages and launches from a reopened home without au
   expect(app.texts()).toContain("请求启动：D:/原神");
 });
 
-test("shows the actual reward for today's community sign-in in the calendar", async () => {
+test("shows the account, today's sign-in and the reward calendar before authorization controls", async () => {
   const app = await open(".", { clock: {} });
   await app.press("米游社");
+  await app.press("模拟当天签到尚未完成");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
   await app.waitFor("社区签到奖励日历");
   await app.waitFor("1970-01-02 · 待处理");
   await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  const expected = [
+    "米哈游账号：10001",
+    "社区签到：成功",
+    "社区签到奖励日历",
+    "1970-01-02 · 已领取 · 30 米游币",
+    "管理授权",
+  ];
+  expect(app.texts().filter(text => expected.includes(text))).toEqual(expected);
   expect(app.texts()).not.toContain("重试社区签到");
 });
 
@@ -47,7 +60,7 @@ test("automatically checks community sign-in for the saved account when reopenin
   await app.press("米游社");
   await app.waitFor("社区签到：待处理");
   await app.waitFor("社区签到：已签到");
-  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).toContain("米哈游账号：10001");
   expect(app.texts()).not.toContain("重试社区签到");
 });
 
@@ -74,7 +87,7 @@ test("checks community sign-in again after a new day and a same-day resume", asy
   await app.press("模拟当天签到尚未完成");
   await app.press("模拟休眠恢复");
   await app.waitFor("社区签到：成功");
-  expect(app.texts()).toContain("签到账号：10001");
+  expect(app.texts()).toContain("米哈游账号：10001");
   await app.press("角色资料");
   expect(app.texts()).toContain("当前游戏 UID：987654321");
   await app.press("米游社");
@@ -95,8 +108,13 @@ test("bounds community sign-in timeout retries and lets the user retry unfinishe
   await app.waitFor("社区签到：待处理");
   expect(app.texts()).toContain("1970-01-02 · 待处理");
   await app.wait(7000);
-  expect(app.texts()).toContain("社区签到：失败，网络超时，请重试");
-  expect(app.texts()).toContain("1970-01-02 · 失败");
+  const recovery = [
+    "社区签到：失败，网络超时，请重试",
+    "1970-01-02 · 失败",
+    "重试社区签到",
+    "管理授权",
+  ];
+  expect(app.texts().filter(text => recovery.includes(text))).toEqual(recovery);
   expect(app.texts()).toContain("签到请求次数：3");
   await app.press("模拟当天签到尚未完成");
   await app.press("重试社区签到");
@@ -115,6 +133,20 @@ test("keeps the reward unconfirmed when only community sign-in is confirmed", as
   await app.waitFor("1970-01-02 · 已签到 · 领取待确认");
   expect(app.texts()).not.toContain("1970-01-02 · 已领取 · 30 米游币");
   expect(app.texts()).not.toContain("重试社区签到");
+  await app.press("角色资料");
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  expect(app.texts()).toContain("当前游戏 UID：987654321");
+  await app.wait(2000);
+  await app.press("米游社");
+  const pending = [
+    "米哈游账号：10001",
+    "1970-01-02 · 已签到 · 领取待确认",
+    "检查奖励领取",
+    "管理授权",
+  ];
+  expect(app.texts().filter(text => pending.includes(text))).toEqual(pending);
+  expect(app.texts()).toContain("签到请求次数：1");
   await app.press("模拟当天签到尚未完成");
   await app.press("检查奖励领取");
   await app.waitFor("签到请求次数：2");
@@ -126,7 +158,7 @@ test("keeps the reward unconfirmed when only community sign-in is confirmed", as
   expect(app.texts()).not.toContain("检查奖励领取");
 });
 
-test("does not carry a reward check into the next day's blocked sign-in", async () => {
+test("does not carry a verification retry into the next day's blocked sign-in", async () => {
   const app = await open(".", { clock: {} });
   await app.press("米游社");
   await app.press("模拟签到已完成但奖励未确认");
@@ -136,9 +168,10 @@ test("does not carry a reward check into the next day's blocked sign-in", async 
   await app.press("模拟签到需要人工验证");
   await app.press("检查奖励领取");
   await app.waitFor("社区签到：失败，请在米游社完成验证或签到后重试");
+  expect(app.texts()).not.toContain("检查奖励领取");
 
   await app.press("模拟当天签到尚未完成");
-  await app.press("检查奖励领取");
+  await app.press("重试社区签到");
   await app.press("模拟签到跨日");
   await app.waitFor("1970-01-03 · 待处理");
   await app.wait(4000);
@@ -162,7 +195,10 @@ test("waits for the user when community sign-in requires verification or a new s
 
   await app.press("模拟签到授权失效");
   await app.press("重试社区签到");
-  await app.waitFor("社区签到：失败，签到授权不可用，请重新扫码");
+  const expired = "社区签到：失败，签到授权不可用，请重新扫码";
+  await app.waitFor(expired);
+  const recovery = [expired, "重新扫码：10001", "已验证游戏 UID：123456789"];
+  expect(app.texts().filter(text => recovery.includes(text))).toEqual(recovery);
   expect(app.texts()).not.toContain("重试社区签到");
   await app.press("模拟签到跨日");
   await app.wait(4000);
@@ -170,6 +206,9 @@ test("waits for the user when community sign-in requires verification or a new s
 
   await app.press("模拟当天签到尚未完成");
   await app.press("重新扫码：10001");
+  await app.waitFor("id:authorization-qr");
+  const scan = ["重新扫码：10001", "等待扫描：请使用米游社扫码", "1970-01-02 · 失败"];
+  expect(app.texts().filter(text => scan.includes(text))).toEqual(scan);
   await app.press("模拟扫码确认新凭据");
   await app.waitFor("社区签到：成功");
   expect(app.texts()).toContain("签到请求次数：3");
@@ -193,7 +232,10 @@ test("cancels pending community sign-in retries when the saved account is remove
 test("follows one download across pages and waits for manual resume after reopening", async () => {
   const app = await open(".", { clock: {}, width: 1040, height: 720 });
   const texts = () => app.texts().map(text => text.replaceAll("\\", "/"));
-  const target = "E:/手动目录/Genshin Impact Game";
+  const target = "F:/新安装位置/Genshin Impact Game";
+  await app.press("模拟安装已移除");
+  await app.press("重新打开启动器");
+  await app.press("游戏管理");
   await app.press("选择安装位置");
   expect(texts()).toContain(`安装目录：${target}`);
   await app.press("开始下载");
@@ -234,10 +276,15 @@ test("follows one download across pages and waits for manual resume after reopen
   expect(app.texts()).toContain("继续下载");
   expect(app.texts()).not.toContain("暂停下载");
   expect(app.texts()).not.toContain("普通启动");
+  expect(texts()).not.toContain(`默认目录：${target}`);
 
+  await app.press("下载安装");
+  expect(texts()).toContain(`安装目录：${target}`);
+  expect(app.texts()).not.toContain("选择安装位置");
   await app.press("继续下载");
   await app.waitFor("已写入 40%（40 / 100 字节）");
   await app.press("模拟下载完成");
+  await app.press("首页");
   await app.waitFor("游戏下载并安装完成");
   await app.press("普通启动");
   expect(texts()).toContain(`请求启动：${target}`);
@@ -612,8 +659,12 @@ test("retains the original account and UID when renewal cannot verify the same U
 test("chooses a discovered installation and keeps the default after reopening", async () => {
   const app = await open(".");
   await app.press("游戏管理");
+  expect(app.texts()).not.toContain("重新查找");
+  await app.press("更换目录");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   expect(app.texts()).toContain("默认目录：D:/原神");
+  expect(app.texts()).not.toContain("重新查找");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录：D:/原神");
@@ -627,8 +678,8 @@ test("chooses a discovered installation and keeps the default after reopening", 
 
 test("starts the game independently of saved MiYouShe authorization", async () => {
   const app = await open(".", { clock: {} });
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   await app.press("米游社");
   await app.press("扫码添加米哈游账号");
   await app.press("模拟扫码确认");
@@ -649,8 +700,10 @@ test("starts the game independently of saved MiYouShe authorization", async () =
 test("chooses a directory from the picker and can also enter a valid path", async () => {
   const app = await open(".");
   await app.press("游戏管理");
+  await app.press("更换目录");
   await app.press("选择游戏目录");
   expect(app.texts()).toContain("默认目录：E:/手动目录");
+  await app.press("更换目录");
   await app.type("game-directory", "D:/原神");
   await app.press("使用此目录");
   await app.press("重新打开启动器");
@@ -658,58 +711,99 @@ test("chooses a directory from the picker and can also enter a valid path", asyn
   expect(app.texts()).toContain("默认目录：D:/原神");
 });
 
-test("revalidates the default before launch when an installation disappears", async () => {
+test("rediscovers a moved installation and restores launch after reopening", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
-  await app.press("模拟安装已移除");
-  await app.press("首页");
+  await app.press("确认保存目录");
+  await app.press("模拟移动安装");
   await app.press("普通启动");
   expect(app.texts()).toContain("启动失败：目录已失效：不是国服官服游戏目录。请重新选择游戏目录。");
   expect(app.texts()).not.toContain("请求启动：D:/原神");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录已失效：不是国服官服游戏目录。请重新选择游戏目录。");
-  expect(app.texts()).toContain("尚未选择默认目录");
+  expect(app.texts()).toContain("已失效的默认目录：D:/原神");
+  await app.press("更换目录");
+  await app.press("重新查找");
+  expect(app.texts()).toContain("F:/已移动/原神");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("默认目录：F:/已移动/原神");
+  await app.press("重新打开启动器");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：F:/已移动/原神");
 });
 
 test("does not claim to save a new default when settings cannot be written", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：C:/原神");
+  await app.press("确认保存目录");
+  await app.press("游戏管理");
+  await app.press("更换目录");
   await app.press("模拟配置写入失败");
   await app.press("选择：D:/原神");
-  expect(app.texts()).toContain("无法选择目录：配置不可写");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("无法保存默认目录：配置不可写");
+  expect(app.texts()).toContain("默认目录：C:/原神");
   await app.press("重新打开启动器");
   await app.press("游戏管理");
   expect(app.texts()).toContain("默认目录：C:/原神");
+  await app.press("首页");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：C:/原神");
 });
 
 test("reports a system launch failure without reporting success", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
   await app.press("模拟系统启动失败");
-  await app.press("首页");
   await app.press("普通启动");
   expect(app.texts()).toContain("启动失败：系统拒绝启动");
   expect(app.texts()).not.toContain("已请求启动游戏");
 });
 
-test("gives installation guidance and blocks launch when no game exists", async () => {
+test("shows both options on an empty home and opens the existing directory picker", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
-  await app.press("模拟安装已移除");
-  await app.press("重新查找");
+  await app.press("模拟未自动发现安装");
+  await app.press("重新打开启动器");
   expect(app.texts()).toContain("未找到游戏。可选择已有游戏目录，或下载国服官服。");
-  await app.press("首页");
   expect(app.texts()).not.toContain("普通启动");
+  expect(app.texts()).toContain("下载安装");
+  await app.press("选择已有游戏");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("请求启动：E:/手动目录");
+});
+
+test("opens the installation location picker from an empty home", async () => {
+  const app = await open(".");
+  await app.press("模拟安装已移除");
+  await app.press("重新打开启动器");
+  await app.press("下载安装");
+  await app.waitFor("开始下载");
+  expect(app.texts().map(text => text.replaceAll("\\", "/")))
+    .toContain("安装目录：F:/新安装位置/Genshin Impact Game");
+});
+
+test("shows the full path of a single installation before confirmation", async () => {
+  const app = await open(".", { width: 1040, height: 900 });
+  await app.press("模拟仅发现一处安装");
+  await app.press("重新打开启动器");
+  const path = String.raw`D:\Games\原神中文目录\GenshinImpactInstallationWithALongFolderName\Genshin Impact Game`;
+  expect(app.texts()).toContain(path);
+  expect(app.texts()).not.toContain("普通启动");
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("普通启动");
+  await app.press("重新打开启动器");
+  await app.press("普通启动");
+  expect(app.texts()).toContain(`请求启动：${path}`);
 });
 
 test("rejects an invalid manual directory without replacing the saved default", async () => {
   const app = await open(".");
-  await app.press("游戏管理");
   await app.press("选择：C:/原神");
+  await app.press("确认保存目录");
+  await app.press("游戏管理");
+  await app.press("更换目录");
   await app.type("game-directory", "E:/not-a-game");
   await app.press("使用此目录");
   expect(app.texts()).toContain("无法选择目录：不是国服官服游戏目录");
