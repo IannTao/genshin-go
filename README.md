@@ -6,12 +6,21 @@ On Windows, use **首页** to confirm an existing installation and launch the ga
 
 In **游戏管理**, select the Windows capture edition of `GGScanner.exe` (compatibility
 baseline v2026.11.15) and its local port (default 8765). In GGScanner, select
-Genshin, enable **持续同步（抓包）** and start the manager service. The scanner
-requires administrator privileges and its third-party capture carries account
-risk. Choose **检查扫描连接** to test the port and **保存扫描设置** to enable sync.
+Genshin and enable **持续同步（抓包）**. The scanner requires administrator
+privileges and its third-party capture carries account risk. Start the manager
+service to test the port with **检查扫描连接**, then choose **保存扫描设置** to
+enable sync.
 
-Click **普通启动** and log into the game. The launcher reads the running manager's
-loopback service before launch and waits for a new login. A scanner failure
+Click **普通启动** and log into the game. The launcher reuses a running Genshin
+manager or starts the selected GGScanner in `--agent-mode`. On a cold start,
+approve the Windows PowerShell administrator prompt if it appears. The helper
+starts GGScanner and can request normal closure of that instance at the end of
+the sync. Cancel the Windows prompt to continue without scanner authorization.
+While waiting in the launcher, choose **直接启动游戏** to skip sync. After 15
+seconds the launcher proceeds with game launch and reports the scanner timeout
+separately.
+Use **取消本次同步** after launch to stop waiting for the login. Cancellation or
+game exit requests normal closure of the dedicated scanner. A scanner failure
 appears alongside the game launch result. Open **角色资料** and select the UID
 used in the game to view its owned characters, elemental forms, progression,
 source time and local receipt time. **停用下次启动同步** disables future scans.

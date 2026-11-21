@@ -3,9 +3,9 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
-async function configuredScanner() {
+async function configuredScanner(scenario = "模拟扫描服务") {
   const app = await open(".", { width: 1100, height: 1000 });
-  await app.press("模拟扫描服务");
+  await app.press(scenario);
   const setting = (prefix: string) => {
     const line = app.texts().find(value => value.startsWith(prefix));
     if (!line) throw new Error(prefix);
@@ -21,6 +21,105 @@ async function configuredScanner() {
   await app.waitFor("已保存扫描设置");
   return { app, setting };
 }
+
+async function selectInstallation(app: Awaited<ReturnType<typeof open>>) {
+  await app.press("首页");
+  await app.press("选择：D:/原神");
+  await app.press("确认保存目录");
+}
+
+windowsTest("can enter the game once while the scanner is preparing", async () => {
+  const { app } = await configuredScanner("模拟扫描器未开");
+  await app.press("模拟等待提权");
+  await selectInstallation(app);
+  await app.press("普通启动");
+  await app.waitFor("正在准备 GGScanner");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("游戏启动次数：0");
+  expect(app.texts()).toContain("扫描器启动请求：1");
+  await app.press("直接启动游戏");
+  await app.waitFor("已请求启动游戏");
+  expect(app.texts()).toContain("已跳过本次同步");
+  expect(app.texts()).toContain("游戏启动次数：1");
+  expect(app.texts()).toContain("扫描器关闭请求：0");
+}, 30000);
+
+for (const [action, result] of [
+  ["取消本次同步", "已取消本次同步"],
+  ["模拟游戏退出", "游戏已退出，已结束本次同步"],
+]) {
+  windowsTest(`starts the game after cold readiness and closes the dedicated scanner on ${action}`, async () => {
+    const { app } = await configuredScanner("模拟扫描器未开");
+    await selectInstallation(app);
+    await app.press("普通启动");
+    await app.waitFor("扫描器启动请求：1");
+    expect(app.texts()).toContain("游戏启动次数：0");
+    await app.press("模拟冷启动服务就绪");
+    await app.waitFor("等待本次登录的角色数据");
+    expect(app.texts()).toContain("已请求启动游戏");
+    expect(app.texts()).toContain("游戏启动次数：1");
+    await app.press(action);
+    await app.waitFor(result);
+    expect(app.texts()).toContain("扫描器关闭请求：1");
+  }, 30000);
+}
+
+for (const [scenario, failure, starts] of [
+  ["模拟取消提权", "已取消 GGScanner 管理员权限请求", 1],
+  ["模拟扫描程序已移除", "找不到选定的 GGScanner.exe，请重新选择抓包版程序", 0],
+  ["模拟端口被占用", "GGScanner 服务错误（HTTP 404），请检查本机端口", 0],
+] as const) {
+  windowsTest(`reports ${scenario} and still starts the game`, async () => {
+    const { app } = await configuredScanner("模拟扫描器未开");
+    await app.press(scenario);
+    await selectInstallation(app);
+    await app.press("普通启动");
+    await app.waitFor("扫描失败：" + failure);
+    expect(app.texts()).toContain("已请求启动游戏");
+    expect(app.texts()).toContain("游戏启动次数：1");
+    expect(app.texts()).toContain(`扫描器启动请求：${starts}`);
+    expect(app.texts()).toContain("扫描器关闭请求：0");
+  }, 30000);
+}
+
+windowsTest("a cold scanner that never becomes ready times out and closes", async () => {
+  const { app } = await configuredScanner("模拟扫描器未开");
+  await selectInstallation(app);
+  await app.press("普通启动");
+  await app.waitFor("扫描器启动请求：1");
+  await app.wait(15000);
+  await app.waitFor("扫描失败：等待 GGScanner 原神管理服务就绪超时，请检查本机端口和持续同步设置");
+  expect(app.texts()).toContain("已请求启动游戏");
+  expect(app.texts()).toContain("游戏启动次数：1");
+  expect(app.texts()).toContain("扫描器关闭请求：1");
+}, 30000);
+
+windowsTest("revalidates the game directory after scanner preparation", async () => {
+  const { app } = await configuredScanner("模拟扫描器未开");
+  await selectInstallation(app);
+  await app.press("普通启动");
+  await app.waitFor("扫描器启动请求：1");
+  await app.press("模拟安装已移除");
+  await app.press("模拟冷启动服务就绪");
+  await app.waitFor("游戏启动失败，已结束本次同步");
+  expect(app.texts().join("\n")).toContain("启动失败：目录已失效");
+  expect(app.texts()).toContain("游戏启动次数：0");
+  expect(app.texts()).toContain("扫描器关闭请求：1");
+}, 30000);
+
+windowsTest("cancelling sync keeps the scanner that was already running", async () => {
+  const { app } = await configuredScanner();
+  await selectInstallation(app);
+  await app.press("普通启动");
+  await app.waitFor("等待本次登录的角色数据");
+  await app.press("取消本次同步");
+  await app.waitFor("已取消本次同步");
+  expect(app.texts()).toContain("扫描器启动请求：0");
+  expect(app.texts()).toContain("扫描器关闭请求：0");
+  await app.press("游戏管理");
+  await app.press("检查扫描连接");
+  await app.waitFor("已连接原神持续同步服务");
+}, 30000);
 
 windowsTest("routes a new login to its own persisted roster from ordinary launch", async () => {
   const { app, setting } = await configuredScanner();
@@ -82,9 +181,7 @@ windowsTest("launches normally when continuous sync is disabled or capture fails
   await app.press("模拟等待登录");
   await app.press("检查扫描连接");
   await app.waitFor("已连接持续同步服务，等待游戏登录");
-  await app.press("首页");
-  await app.press("选择：D:/原神");
-  await app.press("确认保存目录");
+  await selectInstallation(app);
   for (const [scenario, failure] of [
     ["模拟服务禁用", "持续同步已禁用，请在 GGScanner 勾选持续同步并重启原神管理服务"],
     ["模拟采集失败", "GGScanner 采集失败，请查看扫描器诊断并重启管理服务"],

@@ -15,6 +15,35 @@ use std::{
 /// Represents an asynchronous directory selection result.
 pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, String>>>>;
 
+/// Reports whether the game process created by this launch is still running.
+#[cfg(target_os = "windows")]
+pub type GameProcess = Box<dyn Fn() -> bool>;
+
+/// Owns the normal close request for a scanner started by the launcher.
+#[cfg(target_os = "windows")]
+pub struct ScannerInstance(Option<Box<dyn FnOnce()>>);
+
+#[cfg(target_os = "windows")]
+impl ScannerInstance {
+    /// Requests closure of the dedicated instance when this value is dropped.
+    pub fn new(close: impl FnOnce() + 'static) -> Self {
+        Self(Some(Box::new(close)))
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for ScannerInstance {
+    fn drop(&mut self) {
+        if let Some(close) = self.0.take() {
+            close();
+        }
+    }
+}
+
+/// Returns the dedicated scanner instance opened for a single launch.
+#[cfg(target_os = "windows")]
+pub type ScannerLaunch = Pin<Box<dyn Future<Output = Result<ScannerInstance, String>>>>;
+
 /// Provides native launcher operations backed by the specified application data directory.
 #[must_use]
 pub fn environment_in(directory: &Path) -> impl LauncherEnvironment + use<> {
@@ -87,6 +116,16 @@ pub trait LauncherEnvironment {
     fn validate(&self, directory: &Path) -> Result<PathBuf, String>;
     /// Requests a native launch from a validated directory.
     fn launch(&self, directory: &Path) -> Result<(), String>;
+    /// Requests a game launch and tracks its lifetime when Windows returns a process handle.
+    #[cfg(target_os = "windows")]
+    fn launch_with_process(&self, directory: &Path) -> Result<Option<GameProcess>, String> {
+        self.launch(directory).map(|()| None)
+    }
+    /// Starts the selected capture scanner when its manager is unavailable.
+    #[cfg(target_os = "windows")]
+    fn start_scanner(&self, _program: &Path) -> ScannerLaunch {
+        Box::pin(async { Err("无法启动 GGScanner".into()) })
+    }
     /// Opens the platform's game directory picker.
     fn choose_directory(&self) -> DirectoryChoice;
     /// Opens the picker for the parent directory of a new installation.
@@ -269,9 +308,9 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let profile = signal(profile);
     let history_revision = signal(0_u64);
     #[cfg(target_os = "windows")]
-    let scanner = environment
-        .uid_database_path()
-        .map(|path| crate::scanner::Sync::new(path, profile, history_revision));
+    let scanner = environment.uid_database_path().map(|path| {
+        crate::scanner::Sync::new(path, environment.clone(), profile, history_revision)
+    });
     let directory = DirectoryControls {
         environment: environment.clone(),
         state,
@@ -489,19 +528,13 @@ fn launch_directory(
     }
 }
 
-fn request_launch(
-    environment: &dyn LauncherEnvironment,
-    state: Signal<InstallationState>,
-    directory: &Path,
-) -> bool {
-    let result = environment.launch(directory);
-    let launched = result.is_ok();
-    let message = match result {
-        Ok(()) => "已请求启动游戏".into(),
+fn report_launch<T>(state: Signal<InstallationState>, result: Result<T, String>) -> Result<T, ()> {
+    let message = match &result {
+        Ok(_) => "已请求启动游戏".into(),
         Err(error) => format!("启动失败：{error}"),
     };
     state.update(|state| state.message = message);
-    launched
+    result.map_err(|_| ())
 }
 
 #[derive(Clone)]
@@ -539,7 +572,7 @@ impl DirectoryControls {
             .child({
                 #[cfg(target_os = "windows")]
                 {
-                    self.scanner.as_ref().map(|s| s.status())
+                    self.scanner.as_ref().map(crate::scanner::Sync::status)
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
@@ -569,6 +602,14 @@ impl DirectoryControls {
     }
 
     fn launch(&self) {
+        #[cfg(target_os = "windows")]
+        if self
+            .scanner
+            .as_ref()
+            .is_some_and(|scanner| scanner.is_active())
+        {
+            return;
+        }
         let environment = self.environment.clone();
         let state = self.state;
         let Some(directory) = launch_directory(environment.as_ref(), state) else {
@@ -576,14 +617,19 @@ impl DirectoryControls {
         };
         #[cfg(target_os = "windows")]
         if let Some(scanner) = &self.scanner {
+            state.update(|state| state.message = "正在准备启动游戏".into());
             scanner.launch(move || {
-                launch_directory(environment.as_ref(), state).is_some_and(|path| {
-                    path == directory && request_launch(environment.as_ref(), state, &path)
-                })
+                let path = launch_directory(environment.as_ref(), state).ok_or(())?;
+                let result = if path == directory {
+                    environment.launch_with_process(&path)
+                } else {
+                    Err("等待期间游戏目录已更换，请重新启动".into())
+                };
+                report_launch(state, result)
             });
             return;
         }
-        request_launch(environment.as_ref(), state, &directory);
+        let _ = report_launch(state, environment.launch(&directory));
     }
 
     fn candidates(&self) -> View {

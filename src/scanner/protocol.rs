@@ -100,6 +100,28 @@ pub(super) struct Service {
     endpoint: String,
 }
 
+/// Distinguishes a missing listener from an unusable continuous capture response.
+pub(super) enum ReadError {
+    Unavailable,
+    Failed(String),
+}
+
+impl From<&str> for ReadError {
+    fn from(error: &str) -> Self {
+        Self::Failed(error.to_owned())
+    }
+}
+
+impl ReadError {
+    /// Returns the reason presented by the launcher or connection check.
+    pub(super) fn message(self) -> String {
+        match self {
+            Self::Unavailable => "无法连接 GGScanner，请检查原神管理服务和本机端口".into(),
+            Self::Failed(message) => message,
+        }
+    }
+}
+
 impl Service {
     /// Creates a local client with a bounded request timeout.
     pub(super) fn new(port: u16) -> Result<Self, String> {
@@ -116,13 +138,19 @@ impl Service {
     }
 
     /// Returns the current snapshot or an empty result while login is pending.
-    pub(super) async fn read(&self) -> Result<Option<Snapshot>, String> {
+    pub(super) async fn read(&self) -> Result<Option<Snapshot>, ReadError> {
         let mut response = self
             .client
             .get(&self.endpoint)
             .send()
             .await
-            .map_err(|_| "无法连接 GGScanner，请检查原神管理服务和本机端口")?;
+            .map_err(|error| {
+                if error.is_connect() {
+                    ReadError::Unavailable
+                } else {
+                    "GGScanner 本机端口未返回有效响应，请检查端口是否被占用".into()
+                }
+            })?;
         let status = response.status();
         let mut body = Vec::new();
         while let Some(chunk) = response
@@ -162,7 +190,10 @@ impl Service {
             (StatusCode::SERVICE_UNAVAILABLE, Some("continuous_capture_failed")) => {
                 Err("GGScanner 采集失败，请查看扫描器诊断并重启管理服务".into())
             }
-            _ => Err(format!("GGScanner 服务错误（HTTP {}）", status.as_u16())),
+            _ => Err(ReadError::Failed(format!(
+                "GGScanner 服务错误（HTTP {}），请检查本机端口",
+                status.as_u16()
+            ))),
         }
     }
 }

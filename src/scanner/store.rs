@@ -30,8 +30,8 @@ impl Settings {
             .map_err(|e| database_error(&e))
     }
 
-    /// Enables synchronization with the selected Windows capture program.
-    pub(super) fn save(&self, path: &Path) -> Result<(), String> {
+    /// Checks that the selected capture program can still be started.
+    pub(super) fn validate_program(&self) -> Result<(), String> {
         if !self.program.is_absolute()
             || !self.program.is_file()
             || !self
@@ -39,8 +39,14 @@ impl Settings {
                 .file_name()
                 .is_some_and(|name| name.eq_ignore_ascii_case("GGScanner.exe"))
         {
-            return Err("请选择已有的 GGScanner.exe 抓包版".into());
+            return Err("找不到选定的 GGScanner.exe，请重新选择抓包版程序".into());
         }
+        Ok(())
+    }
+
+    /// Enables synchronization with the selected Windows capture program.
+    pub(super) fn save(&self, path: &Path) -> Result<(), String> {
+        self.validate_program()?;
         account_store::open(path)?
             .execute(
                 "INSERT INTO scanner_settings VALUES (1, ?1, ?2)

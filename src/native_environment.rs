@@ -5,6 +5,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(target_os = "windows")]
+mod process;
+
 /// Provides native settings, account storage, and game launch operations.
 pub struct NativeEnvironment {
     settings: Result<PathBuf, String>,
@@ -395,13 +398,27 @@ impl LauncherEnvironment for NativeEnvironment {
     fn launch(&self, directory: &Path) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
-            windows_environment::launch(&validate_installation(directory)?)
+            self.launch_with_process(directory).map(drop)
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = directory;
             Err("本期仅支持 Windows 启动游戏".into())
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn launch_with_process(
+        &self,
+        directory: &Path,
+    ) -> Result<Option<crate::launcher::GameProcess>, String> {
+        process::launch_game(&validate_installation(directory)?)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn start_scanner(&self, program: &Path) -> crate::launcher::ScannerLaunch {
+        let program = program.to_path_buf();
+        Box::pin(process::start_scanner(program))
     }
 
     fn choose_directory(&self) -> DirectoryChoice {
@@ -466,7 +483,6 @@ mod windows_environment {
                 KEY_WOW64_64KEY, REG_SAM_FLAGS, RRF_RT_REG_SZ, RegCloseKey, RegEnumKeyExW,
                 RegGetValueW, RegOpenKeyExW,
             },
-            UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
         },
         core::{PCWSTR, PWSTR},
     };
@@ -624,35 +640,6 @@ mod windows_environment {
             )
         }
         .map_err(|error| error.to_string())
-    }
-
-    #[expect(
-        unsafe_code,
-        reason = "The shell reads executable and working-directory strings during the call"
-    )]
-    pub fn launch(directory: &Path) -> Result<(), String> {
-        let executable = wide(directory.join("YuanShen.exe").as_os_str());
-        let directory = wide(directory.as_os_str());
-        let operation = wide(std::ffi::OsStr::new("open"));
-        // Shell execution respects the game's elevation manifest; no shell command string or arguments are constructed.
-        let result = unsafe {
-            ShellExecuteW(
-                None,
-                PCWSTR(operation.as_ptr()),
-                PCWSTR(executable.as_ptr()),
-                PCWSTR::null(),
-                PCWSTR(directory.as_ptr()),
-                SW_SHOWNORMAL,
-            )
-        };
-        let code = result.0 as isize;
-        if code > 32 {
-            Ok(())
-        } else {
-            Err(format!(
-                "Windows 未能启动游戏（错误码 {code}），请检查权限或在系统提示中允许启动"
-            ))
-        }
     }
 }
 

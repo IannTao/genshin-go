@@ -48,7 +48,7 @@ impl Sync {
         view().gap_2()
             .child(text("已拥有角色同步").font_weight(FontWeight::BOLD))
             .child(text("兼容 GGScanner v2026.11.15 Windows 抓包版。扫描器需要管理员权限，第三方采集工具可能带来游戏账号风险。"))
-            .child(text("在 GGScanner 中选择原神，开启「持续同步（抓包）」并启动管理服务。保存设置后，普通启动会从本机端口读取本次登录的角色资料。"))
+            .child(text("在 GGScanner 中选择原神并开启「持续同步（抓包）」。保存设置后，普通启动会复用已有服务，或尝试打开扫描器并等待服务就绪。"))
             .child(field("scanner-program", "GGScanner.exe 路径", program))
             .child(button("选择 GGScanner.exe", move || owner.run(|| {
                 let choice = pick_paths(OpenDialog::files().title("选择 GGScanner.exe").filter(FileFilter::new("Windows 程序", ["exe"])));
@@ -74,7 +74,7 @@ impl Sync {
                     message.set("正在检查扫描连接".into());
                     spawn(async move {
                         let result = match service {
-                            Ok(service) => service.read().await.map(|r| if r.is_some() { "已连接原神持续同步服务" } else { "已连接持续同步服务，等待游戏登录" }.to_owned()),
+                            Ok(service) => service.read().await.map(|r| if r.is_some() { "已连接原神持续同步服务" } else { "已连接持续同步服务，等待游戏登录" }.to_owned()).map_err(super::protocol::ReadError::message),
                             Err(error) => Err(error),
                         };
                         message.set(result.unwrap_or_else(|error| format!("扫描连接检查失败：{error}")));

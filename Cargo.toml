@@ -34,6 +34,10 @@ windows = { version = "0.62.2", features = [
     "Win32_Storage_FileSystem",
     "Win32_Security_Cryptography",
     "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
     "Win32_System_WindowsProgramming",
 ] }
 md5 = "0.8"
@@ -44,7 +48,7 @@ zstd = "0.14"
 azure_core = { version = "1.1", default-features = false }
 async-trait = "0.1"
 uigf-mihoyo = { git = "https://github.com/UIGF-org/mihoyo-api-sdk", rev = "7c3107f95b72e7324af966b2e8989eb8375e5fc7" }
-tokio = { version = "1", features = ["macros", "net", "rt", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 url = "2"
 rusqlite = { version = "0.38", features = ["bundled"] }
 

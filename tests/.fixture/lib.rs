@@ -33,6 +33,8 @@ fn claimed(completion: Completion) -> SignInResult {
 struct Environment {
     #[cfg(target_os = "windows")]
     scanner: Rc<RefCell<Option<scanner::Scanner>>>,
+    #[cfg(target_os = "windows")]
+    game_running: Signal<bool>,
     launches: Signal<u32>,
     profile: RefCell<Profile>,
     revision: Cell<u64>,
@@ -62,6 +64,20 @@ impl LauncherEnvironment for Environment {
     #[cfg(target_os = "windows")]
     fn uid_database_path(&self) -> Option<Result<PathBuf, String>> {
         self.scanner.borrow().as_ref()?.local.uid_database_path()
+    }
+    #[cfg(target_os = "windows")]
+    fn launch_with_process(
+        &self,
+        directory: &Path,
+    ) -> Result<Option<nsh_app_genshin_go::launcher::GameProcess>, String> {
+        self.launch(directory)?;
+        let running = self.game_running;
+        running.set(true);
+        Ok(Some(Box::new(move || running.get_untracked())))
+    }
+    #[cfg(target_os = "windows")]
+    fn start_scanner(&self, _program: &Path) -> nsh_app_genshin_go::launcher::ScannerLaunch {
+        self.scanner.borrow().as_ref().unwrap().launch()
     }
     fn community_clock(&self) -> Option<Clock> {
         Some(Clock {
@@ -326,6 +342,8 @@ pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
         #[cfg(target_os = "windows")]
         scanner: Rc::default(),
+        #[cfg(target_os = "windows")]
+        game_running: signal(false),
         launches: signal(0),
         profile: RefCell::new(Profile::default()),
         revision: Cell::new(0),
@@ -369,7 +387,12 @@ pub fn Fixture() -> impl IntoElement {
     let launched = environment.launched;
     let generation = signal(0_u32);
     #[cfg(target_os = "windows")]
-    let scanner = Some(scanner::controls(environment.scanner.clone(), generation, environment.launches));
+    let scanner = Some(scanner::controls(
+        environment.scanner.clone(),
+        generation,
+        environment.launches,
+        environment.game_running,
+    ));
     #[cfg(not(target_os = "windows"))]
     let scanner = None::<View>;
     let sign_in_day = environment.sign_in_day;
