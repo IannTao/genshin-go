@@ -24,6 +24,22 @@ launcher can identify the destination on reimport. A file without that field alw
 requires an explicit UID selection. Missing completion times use the UIAF unknown-time
 value.
 
+## Windows backup and restore
+
+Open **角色资料 → 备份与恢复** and choose **创建整体备份**. Copy the displayed JSON file
+from `uid-backups` in the launcher data directory to the new computer. The file
+contains all UID data spaces, wish records and achievement progress. On the new
+computer, scan again in **米游社** to authorize community features.
+
+Select the JSON file or enter its path, then choose **预览恢复**. The preview
+shows new UID data spaces and counts of new, duplicate and conflicting records
+for each UID. **备份并确认恢复** saves the destination's current data to a new
+file in `uid-backups` before merging. Wishes are deduplicated by record ID and
+conflicting wishes keep the local copy. Achievement progress merges by status,
+progress and completion time using the same rules as UIAF import. Restore keeps
+the selected UID if there is one. Use the UIGF and UIAF controls for standard
+exchange files.
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

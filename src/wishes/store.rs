@@ -11,7 +11,7 @@ pub(super) const PAGE_SIZE: i64 = 30;
 
 /// Records the target, additions and skipped records approved in an import preview.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct ImportPlan {
+pub(crate) struct ImportPlan {
     /// Identifies the destination UID.
     pub(super) uid: String,
     /// Holds the validated records ready to insert.
@@ -36,6 +36,22 @@ impl ImportPlan {
     pub(super) fn has_conflicts(&self) -> bool {
         self.conflicts > 0
     }
+
+    /// Indicates whether the merge would add any wish records.
+    pub(crate) fn has_changes(&self) -> bool {
+        !self.additions.is_empty()
+    }
+
+    /// Describes the effects of restoring wishes for this UID.
+    pub(crate) fn restore_summary(&self) -> String {
+        format!(
+            "UID {} · 祈愿新增 {}，重复 {}，冲突 {}",
+            self.uid,
+            self.additions.len(),
+            self.duplicates,
+            self.conflicts
+        )
+    }
 }
 
 /// Classifies the selected source group against a consistent view of the target UID.
@@ -43,7 +59,7 @@ pub(super) fn preview(path: &Path, uid: &str, group: &Group) -> Result<ImportPla
     let mut db = open(path)?;
     let read = db.transaction().map_err(|error| database_error(&error))?;
     check_target(&read, uid, group)?;
-    Ok(plan(uid, group, &all(&read, uid)?))
+    Ok(plan(uid, &group.list, &all(&read, uid)?))
 }
 
 /// Rechecks the preview, backs up the target history, and inserts all additions atomically.
@@ -55,31 +71,35 @@ pub(super) fn import(path: &Path, group: &Group, preview: &ImportPlan) -> Result
     let uid = &preview.uid;
     check_target(&write, uid, group)?;
     let before = all(&write, uid)?;
-    let actual = plan(uid, group, &before);
+    let actual = plan(uid, &group.list, &before);
     if actual != *preview {
         return Err("本机祈愿记录已变更，请重新预览".into());
     }
-    if actual.additions.is_empty() {
+    if !actual.has_changes() {
         return Err("没有可导入的新增记录".into());
     }
     let backup = write_archive(&path.with_file_name("wish-backups"), uid, &before)
         .map_err(|error| format!("导入前备份失败：{error}"))?;
-    {
-        let mut insert = write
-            .prepare(
-                "INSERT INTO wish_records (uid, record_id, drawn_at, record_json)
-                 VALUES (?1, ?2, ?3, ?4)",
-            )
-            .map_err(|error| database_error(&error))?;
-        for wish in actual.additions {
-            let json = serde_json::to_string(&wish).map_err(|error| error.to_string())?;
-            insert
-                .execute(params![uid, wish.id, wish.time, json])
-                .map_err(|error| database_error(&error))?;
-        }
-    }
+    insert(&write, &actual)?;
     write.commit().map_err(|error| database_error(&error))?;
     Ok(backup)
+}
+
+/// Inserts the additions from the merge into the caller's transaction.
+pub(crate) fn insert(db: &Connection, plan: &ImportPlan) -> Result<(), String> {
+    let mut insert = db
+        .prepare(
+            "INSERT INTO wish_records (uid, record_id, drawn_at, record_json)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .map_err(|error| database_error(&error))?;
+    for wish in &plan.additions {
+        let json = serde_json::to_string(wish).map_err(|error| error.to_string())?;
+        insert
+            .execute(params![plan.uid, wish.id, wish.time, json])
+            .map_err(|error| database_error(&error))?;
+    }
+    Ok(())
 }
 
 fn check_target(db: &Connection, uid: &str, group: &Group) -> Result<(), String> {
@@ -99,12 +119,13 @@ fn check_target(db: &Connection, uid: &str, group: &Group) -> Result<(), String>
     Ok(())
 }
 
-fn plan(uid: &str, group: &Group, before: &[Wish]) -> ImportPlan {
+/// Classifies incoming wishes by ID using the existing records for the same UID.
+pub(crate) fn plan(uid: &str, incoming: &[Wish], before: &[Wish]) -> ImportPlan {
     let existing: BTreeMap<&str, &Wish> =
         before.iter().map(|wish| (wish.id.as_str(), wish)).collect();
-    let mut incoming = BTreeMap::<&str, Vec<&Wish>>::new();
-    for wish in &group.list {
-        incoming.entry(&wish.id).or_default().push(wish);
+    let mut by_id = BTreeMap::<&str, Vec<&Wish>>::new();
+    for wish in incoming {
+        by_id.entry(&wish.id).or_default().push(wish);
     }
     let mut result = ImportPlan {
         uid: uid.to_owned(),
@@ -112,7 +133,7 @@ fn plan(uid: &str, group: &Group, before: &[Wish]) -> ImportPlan {
         duplicates: 0,
         conflicts: 0,
     };
-    for (id, entries) in incoming {
+    for (id, entries) in by_id {
         if let Some(saved) = existing.get(id) {
             let matching: Vec<_> = entries
                 .iter()
@@ -164,7 +185,8 @@ pub(super) fn page(path: &Path, uid: &str, index: i64) -> Result<(i64, Vec<Wish>
     Ok((total, records(&read, uid, PAGE_SIZE, index * PAGE_SIZE)?))
 }
 
-fn all(db: &Connection, uid: &str) -> Result<Vec<Wish>, String> {
+/// Reads all stored draws for a UID from the caller's database view.
+pub(crate) fn all(db: &Connection, uid: &str) -> Result<Vec<Wish>, String> {
     records(db, uid, -1, 0)
 }
 

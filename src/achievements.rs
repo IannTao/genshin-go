@@ -1,7 +1,9 @@
 //! Provides the Windows launcher's achievement progress and UIAF file exchange.
-mod archive;
+/// Defines the achievement records shared by standard exchange and overall backups.
+pub(crate) mod archive;
 mod progress;
-mod store;
+/// Stores and merges UID-owned achievement progress.
+pub(crate) mod store;
 
 use crate::archive_json::file_button;
 use crate::launcher::button;

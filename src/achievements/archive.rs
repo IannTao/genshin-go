@@ -68,7 +68,7 @@ impl From<Status> for u8 {
 
 /// Stores the four UIAF achievement fields with their original business meaning.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub(super) struct Record {
+pub(crate) struct Record {
     /// Identifies the achievement in the game.
     #[serde(deserialize_with = "whole_number")]
     pub(super) id: u32,
@@ -174,7 +174,7 @@ impl Record {
 
 /// Holds validated UIAF records grouped by achievement ID.
 #[derive(PartialEq, Eq)]
-pub(super) struct Archive {
+pub(crate) struct Archive {
     /// Identifies the source UID when the exporter supplies the optional extension.
     pub(super) uid: Option<String>,
     /// Contains one merged record per achievement.
@@ -205,11 +205,22 @@ impl Archive {
         if let Some(uid) = &uid {
             validate_uid(uid).map_err(|_| "UIAF 文件声明的游戏 UID 无效")?;
         }
+        Ok(Self::from_records(
+            uid,
+            list.into_iter().map(|Object(record)| record),
+        ))
+    }
+
+    /// Combines achievement progress and counts repeated or conflicting source rows.
+    pub(crate) fn from_records(
+        uid: Option<String>,
+        list: impl IntoIterator<Item = Record>,
+    ) -> Self {
         let mut records = BTreeMap::<u32, Record>::new();
         let mut seen = HashSet::new();
         let mut duplicates = 0;
         let mut conflicts = 0;
-        for Object(record) in list {
+        for record in list {
             if !seen.insert(record) {
                 duplicates += 1;
                 continue;
@@ -222,12 +233,12 @@ impl Archive {
                 })
                 .or_insert(record);
         }
-        Ok(Self {
+        Self {
             uid,
             records,
             duplicates,
             conflicts,
-        })
+        }
     }
 }
 

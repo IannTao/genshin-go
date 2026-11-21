@@ -48,9 +48,18 @@ pub(crate) fn spaces(
     let managing = signal(false);
     let switch = environment.clone();
     #[cfg(target_os = "windows")]
-    let wishes = environment
+    let (backup, wishes) = environment
         .uid_database_path()
-        .map(|path| crate::wishes::section(path, profile, history_revision));
+        .map_or((None, None), |path| {
+            (
+                Some(crate::backup::section(
+                    path.clone(),
+                    profile,
+                    history_revision,
+                )),
+                Some(crate::wishes::section(path, profile, history_revision)),
+            )
+        });
     view()
         .gap_2()
         .child(
@@ -107,6 +116,16 @@ pub(crate) fn spaces(
             history_revision,
         ))
         .child(text(move || message.get()))
+        .child({
+            #[cfg(target_os = "windows")]
+            {
+                backup
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                None::<View>
+            }
+        })
         .child({
             #[cfg(target_os = "windows")]
             {

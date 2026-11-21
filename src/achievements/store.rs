@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// Represents the destination and changes authorized by an import preview.
 #[derive(PartialEq, Eq)]
-pub(super) struct Preview {
+pub(crate) struct Preview {
     /// Identifies the destination UID.
     pub(super) uid: String,
     before: Vec<Record>,
@@ -31,7 +31,7 @@ impl Preview {
     }
 
     /// Indicates whether committing the preview would change saved progress.
-    pub(super) fn has_changes(&self) -> bool {
+    pub(crate) fn has_changes(&self) -> bool {
         !self.changes.is_empty()
     }
 
@@ -42,6 +42,18 @@ impl Preview {
             self.duplicates, self.conflicts
         )
     }
+
+    /// Describes the effects of restoring achievement progress for this UID.
+    pub(crate) fn restore_summary(&self) -> String {
+        format!(
+            "UID {} · 成就新增 {}，更新 {}，重复 {}，冲突 {}",
+            self.uid,
+            self.additions,
+            self.changes.len() - self.additions,
+            self.duplicates,
+            self.conflicts
+        )
+    }
 }
 
 /// Prepares a merge for one existing UID without writing any achievement progress.
@@ -50,7 +62,11 @@ pub(super) fn preview(path: &Path, uid: &str, archive: &Archive) -> Result<Previ
         return Err("必须导入文件声明的 UID 数据空间".into());
     }
     let db = open(path)?;
-    let before = load_records(&db, uid)?;
+    Ok(plan(uid, archive, load_records(&db, uid)?))
+}
+
+/// Compares validated incoming progress with the saved records for the same UID.
+pub(crate) fn plan(uid: &str, archive: &Archive, before: Vec<Record>) -> Preview {
     let existing: BTreeMap<_, _> = before.iter().map(|record| (record.id, *record)).collect();
     let mut result = Preview {
         uid: uid.to_owned(),
@@ -79,7 +95,7 @@ pub(super) fn preview(path: &Path, uid: &str, archive: &Archive) -> Result<Previ
             result.changes.push(incoming);
         }
     }
-    Ok(result)
+    result
 }
 
 /// Backs up the current progress and applies the confirmed merge in one SQLite transaction.
@@ -101,9 +117,14 @@ pub(super) fn import(path: &Path, preview: &Preview) -> Result<PathBuf, String> 
         &preview.before,
     )
     .map_err(|error| format!("导入前备份失败：{error}"))?;
-    upsert_records(&write, uid, &preview.changes)?;
+    apply(&write, preview)?;
     write.commit().map_err(|error| database_error(&error))?;
     Ok(backup)
+}
+
+/// Writes the planned achievement changes into the caller's transaction.
+pub(crate) fn apply(db: &Connection, preview: &Preview) -> Result<(), String> {
+    upsert_records(db, &preview.uid, &preview.changes)
 }
 
 /// Saves a manual completion change against the latest record for this UID.
@@ -157,7 +178,8 @@ fn decode_record(json: &str) -> Result<Record, String> {
     serde_json::from_str(json).map_err(|error| format!("读取成就进度失败：{error}"))
 }
 
-fn load_records(db: &Connection, uid: &str) -> Result<Vec<Record>, String> {
+/// Reads all stored progress for a UID from the caller's database view.
+pub(crate) fn load_records(db: &Connection, uid: &str) -> Result<Vec<Record>, String> {
     let exists: bool = db
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM uid_history WHERE uid = ?1)",

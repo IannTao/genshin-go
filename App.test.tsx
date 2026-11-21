@@ -6,6 +6,67 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("creates an overall backup and previews restoring cleared wishes and achievement progress", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450020");
+  await app.press("创建 UID 数据空间");
+  await app.type("uigf-file", "tests/data/uigf-v4.2.json");
+  await app.press("读取 UIGF 文件");
+  await app.press("备份并确认导入");
+  const wish = "2025-10-09 08:00:00 · 角色活动祈愿 · 神里绫华 · 5 星";
+  await app.waitFor(wish);
+  await app.press("成就");
+  await app.press("标记完成：风与异乡人（80001）");
+
+  await app.press("角色资料");
+  await app.press("备份与恢复");
+  await app.press("创建整体备份");
+  const backup = app.texts().find((line) => line.startsWith("已创建整体备份："));
+  expect(backup).toBeDefined();
+  const path = backup?.slice("已创建整体备份：".length) ?? "";
+
+  await app.press("资料管理");
+  app.onDialog(() => "确认删除 UID：123450020");
+  await app.press("删除历史记录");
+  await app.waitFor("已清除 UID 123450020 的本机历史记录");
+
+  await app.type("restore-file", path);
+  await app.press("预览恢复");
+  expect(app.texts()).toContain("UID 123450020 · 祈愿新增 1，重复 0，冲突 0");
+  expect(app.texts()).toContain("UID 123450020 · 成就新增 1，更新 0，重复 0，冲突 0");
+  expect(app.texts()).toContain("暂无祈愿记录");
+  await app.press("成就");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await app.press("角色资料");
+  await app.press("备份并确认恢复");
+  expect(app.texts().join("\n")).toContain("恢复完成。恢复前备份：");
+  await app.waitFor(wish);
+  await app.press("预览恢复");
+  expect(app.texts()).toContain("UID 123450020 · 祈愿新增 0，重复 1，冲突 0");
+  expect(app.texts()).toContain("没有需要恢复的变更");
+  expect(app.texts()).not.toContain("备份并确认恢复");
+  await app.press("成就");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+}, 60000);
+
+windowsTest("previews and creates a missing UID from an overall backup", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.press("备份与恢复");
+  await app.type("restore-file", "tests/data/uid-backup-v1.json");
+  await app.press("预览恢复");
+  await app.waitFor("新建 UID 数据空间：123450022");
+  expect(app.texts()).not.toContain("切换至 UID：123450022");
+  expect(app.texts()).not.toContain("当前游戏 UID：123450022");
+  await app.press("备份并确认恢复");
+
+  if (app.texts().includes("切换至 UID：123450022")) {
+    await app.press("切换至 UID：123450022");
+  }
+  await app.waitFor("当前游戏 UID：123450022");
+});
+
 test("opens the launcher home and reaches installation controls", async () => {
   const app = await open(".");
   expect(app.texts()).toContain("原神启动器");

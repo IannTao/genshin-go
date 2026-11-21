@@ -1,0 +1,25 @@
+{
+  "info": {
+    "version": "v4.2",
+    "export_timestamp": 1760000000,
+    "export_app": "Genshin-Go tests",
+    "export_app_version": "1"
+  },
+  "hk4e": [
+    {
+      "uid": "123450020",
+      "timezone": 8,
+      "list": [
+        {
+          "id": "1000000000000000001",
+          "item_id": "10000002",
+          "name": "神里绫华",
+          "time": "2025-10-09 16:00:00",
+          "gacha_type": "400",
+          "uigf_gacha_type": "301",
+          "rank_type": "5"
+        }
+      ]
+    }
+  ]
+}

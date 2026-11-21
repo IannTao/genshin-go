@@ -183,11 +183,15 @@ pub(crate) fn device_id(path: &Path) -> Result<String, String> {
         .map_err(|error| database_error(&error))
 }
 
-fn snapshot(db: &Connection) -> rusqlite::Result<Profile> {
+/// Lists every local UID data space, including spaces without records.
+pub(crate) fn list_uids(db: &Connection) -> rusqlite::Result<Vec<String>> {
     let mut query = db.prepare("SELECT uid FROM uid_spaces ORDER BY uid")?;
-    let uids = query
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+    query.query_map([], |row| row.get(0))?.collect()
+}
+
+/// Reads UID selection and account metadata from the supplied database view.
+pub(crate) fn snapshot(db: &Connection) -> rusqlite::Result<Profile> {
+    let uids = list_uids(db)?;
     let active_uid = db
         .query_row(
             "SELECT uid FROM active_uid WHERE singleton = 1",
@@ -235,6 +239,24 @@ pub(crate) fn load(path: &Path) -> Result<Profile, String> {
     snapshot(&read).map_err(|error| database_error(&error))
 }
 
+/// Creates a UID data space if it does not already exist.
+pub(crate) fn ensure_uid_space(db: &Connection, uid: &str) -> rusqlite::Result<()> {
+    db.execute(
+        "INSERT INTO uid_spaces (uid) VALUES (?1) ON CONFLICT(uid) DO NOTHING",
+        [uid],
+    )?;
+    Ok(())
+}
+
+/// Sets the active UID only if no UID has been selected yet.
+pub(crate) fn ensure_active_uid(db: &Connection, uid: &str) -> rusqlite::Result<()> {
+    db.execute(
+        "INSERT INTO active_uid (singleton, uid) VALUES (1, ?1) ON CONFLICT(singleton) DO NOTHING",
+        [uid],
+    )?;
+    Ok(())
+}
+
 /// Sets the active UID and optionally creates its data space in the same transaction.
 pub(crate) fn select_uid(path: &Path, uid: &str, create: bool) -> Result<Profile, String> {
     validate_uid(uid)?;
@@ -243,12 +265,7 @@ pub(crate) fn select_uid(path: &Path, uid: &str, create: bool) -> Result<Profile
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| database_error(&error))?;
     if create {
-        write
-            .execute(
-                "INSERT INTO uid_spaces (uid) VALUES (?1) ON CONFLICT(uid) DO NOTHING",
-                [uid],
-            )
-            .map_err(|error| database_error(&error))?;
+        ensure_uid_space(&write, uid).map_err(|error| database_error(&error))?;
     }
     let selected = write
         .execute(
@@ -393,18 +410,8 @@ pub(crate) fn save(
     {
         return Err("本机授权已在另一启动器中更改".into());
     }
-    write
-        .execute(
-            "INSERT INTO uid_spaces (uid) VALUES (?1) ON CONFLICT(uid) DO NOTHING",
-            [uid],
-        )
-        .map_err(|error| database_error(&error))?;
-    write
-        .execute(
-            "INSERT INTO active_uid (singleton, uid) VALUES (1, ?1) ON CONFLICT(singleton) DO NOTHING",
-            [uid],
-        )
-        .map_err(|error| database_error(&error))?;
+    ensure_uid_space(&write, uid).map_err(|error| database_error(&error))?;
+    ensure_active_uid(&write, uid).map_err(|error| database_error(&error))?;
     write
         .execute(
             "

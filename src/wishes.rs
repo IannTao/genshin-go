@@ -1,7 +1,9 @@
 //! UIGF archive handling, storage and launcher controls for wish records.
-mod archive;
+/// Defines the wish records shared by standard exchange and overall backups.
+pub(crate) mod archive;
 mod statistics;
-mod store;
+/// Stores and deduplicates UID-owned wish records.
+pub(crate) mod store;
 mod ui;
 
 /// Creates the UID-owned wish table and its browsing index.

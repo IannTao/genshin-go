@@ -109,7 +109,7 @@ pub(super) enum Rarity {
 
 /// Represents a single original game wish with its time normalized to UTC.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
-pub(super) struct Wish {
+pub(crate) struct Wish {
     /// Identifies the draw within its UID.
     pub(super) id: String,
     /// Records the UTC date and time of the draw.
@@ -173,7 +173,8 @@ impl Wish {
         }
     }
 
-    fn normalize(&mut self, timezone: i32) -> Result<(), String> {
+    /// Validates a draw and normalizes its ID and timestamp to local storage format.
+    pub(crate) fn normalize(&mut self, timezone: i32) -> Result<(), String> {
         if self.id.len() > 19 || !is_decimal(&self.id) {
             return Err("id 必须是 1–19 位数字字符串".into());
         }
