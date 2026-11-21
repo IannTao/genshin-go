@@ -1,10 +1,11 @@
 use super::archive::{Archive, Group, Pool};
 use super::store::{self, ImportPlan, PAGE_SIZE};
+use crate::archive_json::file_button;
 use crate::launcher::button;
 use crate::profile::Profile;
 use nsh_base::theme;
 use nsh_core::element::{input, open_url, pick_paths};
-use nsh_core::file_dialog::{FileFilter, OpenDialog};
+use nsh_core::file_dialog::OpenDialog;
 use nsh_core::prelude::*;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -92,7 +93,6 @@ impl ImportControls {
         let edit = self.clone();
         let browse = self.clone();
         let load = self.clone();
-        let owner = Owner::current();
         view()
             .gap_2()
             .child(
@@ -111,27 +111,12 @@ impl ImportControls {
                     .flex_row()
                     .flex_wrap()
                     .gap_2()
-                    .child(button("选择 UIGF 文件", move || {
-                        let browse = browse.clone();
-                        owner.run(move || {
-                            let request = pick_paths(
-                                OpenDialog::files()
-                                    .title("选择 UIGF JSON 文件")
-                                    .filter(FileFilter::new("UIGF JSON", ["json"])),
-                            );
-                            spawn(async move {
-                                match request.await {
-                                    Ok(Some(paths)) => {
-                                        if let Some(path) = paths.first() {
-                                            browse.set_input(path.to_string_lossy().into_owned());
-                                            browse.load(profile);
-                                        }
-                                    }
-                                    Ok(None) => (),
-                                    Err(error) => browse.message.set(error),
-                                }
-                            });
-                        });
+                    .child(file_button("UIGF", move |result| match result {
+                        Ok(path) => {
+                            browse.set_input(path.to_string_lossy().into_owned());
+                            browse.load(profile);
+                        }
+                        Err(error) => browse.message.set(error),
                     }))
                     .child(button("读取 UIGF 文件", move || load.load(profile))),
             )

@@ -42,14 +42,14 @@ pub(crate) fn validate_uid(uid: &str) -> Result<(), String> {
 pub(crate) fn spaces(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
+    history_revision: Signal<u64>,
 ) -> impl IntoElement {
     let message = signal(String::new());
     let managing = signal(false);
-    let history_revision = signal(0_u64);
     let switch = environment.clone();
     #[cfg(target_os = "windows")]
     let wishes = environment
-        .wish_database_path()
+        .uid_database_path()
         .map(|path| crate::wishes::section(path, profile, history_revision));
     view()
         .gap_2()
@@ -211,7 +211,7 @@ fn confirm_history_deletion(
     let answer = alert_dialog()
         .title(format!("删除 UID {uid} 的历史记录？"))
         .description(
-            "将清除该 UID 在本机数据库中保存的各类历史。UIGF 备份和导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+            "将清除该 UID 在本机数据库中保存的各类历史。UIGF 和 UIAF 的备份及导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
         )
         // The first button receives the Windows default focus when there is no regular action.
         .cancel("cancel", "取消")

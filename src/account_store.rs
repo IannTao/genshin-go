@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 /// Formats an error encountered while accessing the launcher database.
 pub(crate) fn database_error(error: &rusqlite::Error) -> String {
@@ -48,9 +48,13 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
         .map_err(|error| database_error(&error))?;
     db.pragma_update(None, "secure_delete", true)
         .map_err(|error| database_error(&error))?;
-    if schema_version(&db)? == SCHEMA_VERSION {
-        return Ok(db);
+    if schema_version(&db)? < SCHEMA_VERSION {
+        migrate(&mut db)?;
     }
+    Ok(db)
+}
+
+fn migrate(db: &mut Connection) -> Result<(), String> {
     let migration = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| database_error(&error))?;
@@ -131,11 +135,22 @@ pub(crate) fn open(path: &Path) -> Result<Connection, String> {
     if version < 7 {
         ensure_authorization_revision(&migration).map_err(|error| database_error(&error))?;
     }
+    if version < 8 {
+        migration
+            .execute_batch(
+                "CREATE TABLE achievement_records (
+                    uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
+                    achievement_id INTEGER NOT NULL,
+                    record_json TEXT NOT NULL,
+                    PRIMARY KEY (uid, achievement_id)
+                );",
+            )
+            .map_err(|error| database_error(&error))?;
+    }
     migration
         .pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|error| database_error(&error))?;
-    migration.commit().map_err(|error| database_error(&error))?;
-    Ok(db)
+    migration.commit().map_err(|error| database_error(&error))
 }
 
 fn ensure_authorization_revision(db: &Connection) -> rusqlite::Result<()> {
@@ -504,6 +519,7 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "ALTER TABLE account_authorization DROP COLUMN revision;
+             DROP TABLE achievement_records;
              PRAGMA user_version = 6;
              INSERT INTO uid_spaces VALUES ('123456789');
              INSERT INTO active_uid VALUES (1, '123456789');
@@ -549,6 +565,7 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "DROP TABLE wish_records;
+             DROP TABLE achievement_records;
              ALTER TABLE account_authorization DROP COLUMN protected_community_cookie;
              PRAGMA user_version = 4;",
         )?;

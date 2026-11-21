@@ -1,11 +1,10 @@
+use crate::archive_json::Object;
 use crate::profile::validate_uid;
 use chrono::{Duration, NaiveDateTime};
-use serde::de::{IgnoredAny, MapAccess, Visitor, value::MapAccessDeserializer};
+use serde::de::IgnoredAny;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
-use std::fmt;
 use std::fs;
-use std::marker::PhantomData;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -52,29 +51,6 @@ fn when_present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     decoder: D,
 ) -> Result<Option<T>, D::Error> {
     T::deserialize(decoder).map(Some)
-}
-
-// A JSON object must not deserialize through Serde's positional struct syntax.
-struct Object<T>(T);
-
-impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
-    fn deserialize<D: Deserializer<'de>>(decoder: D) -> Result<Self, D::Error> {
-        struct ObjectVisitor<T>(PhantomData<T>);
-
-        impl<'de, T: Deserialize<'de>> Visitor<'de> for ObjectVisitor<T> {
-            type Value = Object<T>;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a JSON object")
-            }
-
-            fn visit_map<M: MapAccess<'de>>(self, entries: M) -> Result<Self::Value, M::Error> {
-                T::deserialize(MapAccessDeserializer::new(entries)).map(Object)
-            }
-        }
-
-        decoder.deserialize_map(ObjectVisitor(PhantomData))
-    }
 }
 
 #[derive(Deserialize)]

@@ -2,6 +2,21 @@
 
 On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
+## Windows achievement progress
+
+Open **成就** in the sidebar to view the current UID's achievement progress and exchange
+[UIAF v1.1 files](https://uigf.org/zh/standards/uiaf.html). Create or switch UID data spaces
+in **角色资料**. Select a JSON file or enter its path, choose the destination UID, and
+review additions, updates, duplicates, and conflicts before clicking **备份并确认导入**.
+
+The merge keeps the strongest completion status, the greatest progress, and the earliest
+known completion time from completed records. Reimporting identical data leaves progress
+unchanged. Backups and exports appear under `achievement-backups` and `achievement-exports`
+in the launcher data directory. They include `info.uid` as optional metadata so the
+launcher can identify the destination on reimport. A file without that field always
+requires an explicit UID selection. Missing completion times use the UIAF unknown-time
+value.
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

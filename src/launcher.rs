@@ -49,9 +49,9 @@ pub trait LauncherEnvironment {
     fn select_uid(&self, uid: &str, create: bool) -> Result<crate::profile::Profile, String>;
     /// Clears the local business records of one UID while preserving its data space.
     fn delete_uid_history(&self, uid: &str) -> Result<crate::profile::Profile, String>;
-    /// Identifies the local database used for Windows wish records, when available.
+    /// Identifies the local database used for Windows UID history, when available.
     #[cfg(target_os = "windows")]
-    fn wish_database_path(&self) -> Option<Result<PathBuf, String>> {
+    fn uid_database_path(&self) -> Option<Result<PathBuf, String>> {
         None
     }
     /// Resolves the unique game UID associated with the scanned authorization.
@@ -231,14 +231,16 @@ enum Page {
     Game,
     Community,
     Profile,
+    Achievements,
 }
 
 impl Page {
-    const ALL: [(Self, &'static str); 4] = [
+    const ALL: [(Self, &'static str); 5] = [
         (Self::Home, "首页"),
         (Self::Game, "游戏管理"),
         (Self::Community, "米游社"),
         (Self::Profile, "角色资料"),
+        (Self::Achievements, "成就"),
     ];
 }
 
@@ -264,16 +266,31 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         ),
     };
     let profile = signal(profile);
+    let history_revision = signal(0_u64);
     let install = InstallSession::new(environment.clone(), move |path| set_default(state, path));
     let community = crate::accounts::community_page(environment.clone(), profile);
-    let uid_spaces = crate::profile::spaces(environment, profile);
+    #[cfg(target_os = "windows")]
+    let achievements = environment.uid_database_path().map(|database| {
+        panel(
+            page,
+            Page::Achievements,
+            crate::achievements::section(database, profile, history_revision),
+        )
+    });
+    #[cfg(not(target_os = "windows"))]
+    let achievements = None::<Scroll>;
+    let uid_spaces = crate::profile::spaces(environment, profile, history_revision);
     view()
         .flex_1()
         .min_h(px(0.0))
         .flex_row()
         .bg(PAPER)
         .text_color(INK)
-        .child(sidebar(page, install.sidebar_status(open_install)))
+        .child(sidebar(
+            page,
+            install.sidebar_status(open_install),
+            achievements.is_some(),
+        ))
         .child(
             view()
                 .flex_1()
@@ -311,11 +328,12 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                         .gap_2()
                         .child(profile_error.map(text))
                         .child(uid_spaces),
-                )),
+                ))
+                .child(achievements),
         )
 }
 
-fn sidebar(page: Signal<Page>, download_status: View) -> View {
+fn sidebar(page: Signal<Page>, download_status: View, has_achievements: bool) -> View {
     view()
         .w(|| {
             px(if compact_window() {
@@ -338,23 +356,29 @@ fn sidebar(page: Signal<Page>, download_status: View) -> View {
                 .font_weight(FontWeight::BOLD)
                 .style_when(compact_window, Styled::hidden),
         )
-        .child(Page::ALL.map(|(target, label)| {
-            action_button(label, move || page.set(target))
-                .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
-                .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
-                .accessibility_state(move || AccessibilityState {
-                    selected: page.get() == target,
-                    ..Default::default()
-                })
-                .bg(move || {
-                    if page.get() == target {
-                        rgb(0x0037_6e5b)
-                    } else {
-                        rgb(SIDEBAR_BACKGROUND)
-                    }
-                })
-                .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
-        }))
+        .children(
+            Page::ALL
+                .into_iter()
+                .filter(|(target, _)| *target != Page::Achievements || has_achievements)
+                .map(|(target, label)| {
+                    action_button(label, move || page.set(target))
+                        .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
+                        .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
+                        .accessibility_state(move || AccessibilityState {
+                            selected: page.get() == target,
+                            ..Default::default()
+                        })
+                        .bg(move || {
+                            if page.get() == target {
+                                rgb(0x0037_6e5b)
+                            } else {
+                                rgb(SIDEBAR_BACKGROUND)
+                            }
+                        })
+                        .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
+                        .into_element()
+                }),
+        )
         .child(download_status.hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND))))
 }
 

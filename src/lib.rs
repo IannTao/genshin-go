@@ -8,6 +8,10 @@ mod account_service;
 mod account_store;
 pub mod accounts;
 #[cfg(target_os = "windows")]
+mod achievements;
+#[cfg(target_os = "windows")]
+mod archive_json;
+#[cfg(target_os = "windows")]
 mod community_service;
 pub mod community_sign_in;
 pub mod game_install;
