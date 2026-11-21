@@ -1,0 +1,12 @@
+{
+  "format": "GOOD",
+  "version": 3,
+  "source": "Teyvat.me",
+  "leyline": 1,
+  "timestamp": 1792004800123,
+  "gi_player": {"uid": 123450123},
+  "gi_off": ["materials"],
+  "weapons": [],
+  "artifacts": [],
+  "materials": {}
+}

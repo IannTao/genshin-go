@@ -1,0 +1,11 @@
+{
+  "format": "GOOD",
+  "version": 3,
+  "source": "Teyvat.me",
+  "leyline": 1,
+  "timestamp": 1792004800123,
+  "gi_player": {"uid": 123450123},
+  "weapons": [{"key":"DullBlade","level":20,"ascension":1,"refinement":1,"location":"","lock":false}],
+  "artifacts": [{"setKey":"GladiatorsFinale","slotKey":"flower","rarity":5,"mainStatKey":"hp","level":4,"substats":[{"key":"critRate_","value":3.9,"initialValue":3.9},{"key":"","value":0}],"location":"","lock":false}],
+  "materials": {"Mora": 1680}
+}

@@ -49,18 +49,23 @@ pub(crate) fn spaces(
     let managing = signal(false);
     let switch = environment.clone();
     #[cfg(target_os = "windows")]
-    let (backup, wishes) = environment
-        .uid_database_path()
-        .map_or((None, None), |path| {
-            (
-                Some(crate::backup::section(
-                    path.clone(),
-                    profile,
-                    history_revision,
-                )),
-                Some(crate::wishes::section(path, profile, history_revision)),
-            )
-        });
+    let local_records = environment.uid_database_path().map(|path| {
+        view()
+            .gap_2()
+            .child(crate::inventory::section(
+                path.clone(),
+                profile,
+                history_revision,
+            ))
+            .child(crate::backup::section(
+                path.clone(),
+                profile,
+                history_revision,
+            ))
+            .child(crate::wishes::section(path, profile, history_revision))
+    });
+    #[cfg(not(target_os = "windows"))]
+    let local_records = None::<View>;
     view()
         .gap_2()
         .child(
@@ -118,26 +123,7 @@ pub(crate) fn spaces(
         ))
         .child(text(move || message.get()))
         .child(roster)
-        .child({
-            #[cfg(target_os = "windows")]
-            {
-                backup
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                None::<View>
-            }
-        })
-        .child({
-            #[cfg(target_os = "windows")]
-            {
-                wishes
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                None::<View>
-            }
-        })
+        .child(local_records)
 }
 
 fn uid_creation(
@@ -232,7 +218,7 @@ fn confirm_history_deletion(
     let answer = alert_dialog()
         .title(format!("删除 UID {uid} 的历史记录？"))
         .description(
-            "将清除该 UID 在本机数据库中保存的各类历史。UIGF 和 UIAF 的备份及导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+            "将清除该 UID 在本机数据库中保存的各类历史。UIGF、UIAF 和背包的备份及导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
         )
         // The first button receives the Windows default focus when there is no regular action.
         .cancel("cancel", "取消")

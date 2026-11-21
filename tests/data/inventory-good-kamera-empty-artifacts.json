@@ -1,0 +1,8 @@
+{
+  "format": "GOOD",
+  "version": 2,
+  "source": "Inventory_Kamera",
+  "metadata": {"capturedAt": "2026-10-09T08:00:00+08:00"},
+  "weapons": [{"key":"DullBlade","level":1,"ascension":0,"refinement":1,"location":"","lock":false,"id":0}],
+  "materials": {"Mora": 1680}
+}

@@ -13,7 +13,14 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
+const ACHIEVEMENT_SCHEMA: &str = "
+    CREATE TABLE achievement_records (
+        uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
+        achievement_id INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        PRIMARY KEY (uid, achievement_id)
+    );";
 
 /// Formats an error encountered while accessing the launcher database.
 pub(crate) fn database_error(error: &rusqlite::Error) -> String {
@@ -135,22 +142,16 @@ fn migrate(db: &mut Connection) -> Result<(), String> {
     if version < 7 {
         ensure_authorization_revision(&migration).map_err(|error| database_error(&error))?;
     }
-    if version < 8 {
-        migration
-            .execute_batch(
-                "CREATE TABLE achievement_records (
-                    uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
-                    achievement_id INTEGER NOT NULL,
-                    record_json TEXT NOT NULL,
-                    PRIMARY KEY (uid, achievement_id)
-                );",
-            )
-            .map_err(|error| database_error(&error))?;
-    }
-    if version < 9 {
-        migration
-            .execute_batch(crate::scanner::SCHEMA)
-            .map_err(|error| database_error(&error))?;
+    for (introduced, schema) in [
+        (8, ACHIEVEMENT_SCHEMA),
+        (9, crate::scanner::SCHEMA),
+        (10, crate::inventory::SCHEMA),
+    ] {
+        if version < introduced {
+            migration
+                .execute_batch(schema)
+                .map_err(|error| database_error(&error))?;
+        }
     }
     migration
         .pragma_update(None, "user_version", SCHEMA_VERSION)
@@ -531,6 +532,9 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "ALTER TABLE account_authorization DROP COLUMN revision;
+             DROP TABLE inventory_materials;
+             DROP TABLE material_catalog;
+             DROP TABLE inventory_snapshots;
              DROP TABLE scanner_settings;
              DROP TABLE owned_characters;
              DROP TABLE achievement_records;
@@ -579,6 +583,9 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "DROP TABLE wish_records;
+             DROP TABLE inventory_materials;
+             DROP TABLE material_catalog;
+             DROP TABLE inventory_snapshots;
              DROP TABLE scanner_settings;
              DROP TABLE owned_characters;
              DROP TABLE achievement_records;

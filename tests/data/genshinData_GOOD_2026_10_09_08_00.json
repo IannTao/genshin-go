@@ -1,0 +1,9 @@
+{
+  "format": "GOOD",
+  "version": 2,
+  "source": "Inventory_Kamera",
+  "kamera_version": "1.3.17",
+  "weapons": [{"key":"DullBlade","level":20,"ascension":1,"refinement":1,"location":"","lock":false,"id":0}],
+  "artifacts": [{"setKey":"GladiatorsFinale","slotKey":"flower","rarity":5,"mainStatKey":"hp","level":4,"substats":[{"key":"critRate_","value":3.9}],"location":"","lock":true,"id":0}],
+  "materials": {"SlimeCondensate": 81}
+}

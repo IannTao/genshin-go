@@ -1,0 +1,9 @@
+{
+  "format": "GOOD",
+  "version": 2,
+  "source": "Inventory_Kamera",
+  "metadata": {"capturedAt": "2026-10-10T07:50:00+08:00"},
+  "weapons": [{"key":"HuntersBow","level":1,"ascension":0,"refinement":1,"location":"","lock":false,"id":0}],
+  "artifacts": [],
+  "materials": {"SlimeCondensate": 3}
+}

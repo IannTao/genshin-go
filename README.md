@@ -63,6 +63,32 @@ progress and completion time using the same rules as UIAF import. Restore keeps
 the selected UID if there is one. Use the UIGF and UIAF controls for standard
 exchange files.
 
+## Windows inventory snapshots
+
+Open **角色资料 → 背包仓库** to browse weapons, artifacts and materials for the
+selected game UID. The latest complete snapshot opens by default. Use **背包快照历史**
+to view an older snapshot. Each view shows the original collection time and
+the inventory from that snapshot.
+
+Select or enter the path to a GOOD JSON export with weapons, artifacts and
+materials. Choose **预览背包导入至 UID** for the appropriate data space, verify that
+the collection covered all three categories, then choose **备份并确认完整导入**.
+
+Inventory Kamera exports GOOD v2 and can collect equipment and materials from the
+game window. Its original filename supplies the local export time. Confirm the
+collection time and add its UTC offset, such as `+08:00`. If the file omits a
+category, you can continue after verifying that the game inventory for that
+category is empty. [Inventory Kamera](https://github.com/Andrewthe13th/Inventory_Kamera)
+
+The launcher reads the UID and collection time declared by a GOOD v3 Leyline
+export. For other GOOD files, `metadata.uid` and `metadata.capturedAt` can supply
+the same information. [Leyline format](https://teyvat.me/developers#the-file)
+
+The inventory uses each snapshot's recorded quantities. Before importing, the
+launcher backs up the UID's current snapshot to `inventory-backups` in its data
+directory. A previous snapshot backup can be selected through the GOOD importer.
+The first import records that the UID had no inventory yet.
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

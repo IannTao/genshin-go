@@ -17,6 +17,8 @@ mod backup;
 mod community_service;
 pub mod community_sign_in;
 pub mod game_install;
+#[cfg(target_os = "windows")]
+mod inventory;
 pub mod launcher;
 mod native_environment;
 pub mod profile;

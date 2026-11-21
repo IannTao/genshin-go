@@ -6,6 +6,136 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("previews and backs up a complete inventory before importing it for the chosen UID", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450120");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await app.press("读取 GOOD 文件");
+  await app.type("inventory-captured-at", "+08:00");
+  await app.press("预览背包导入至 UID 123450120");
+  expect(app.texts()).toContain("UID 123450120 · 武器 1 件 · 圣遗物 1 件 · 材料 1 种");
+  expect(app.texts()).toContain("暂无背包快照");
+  await app.press("备份并确认完整导入");
+  expect(app.texts().join("\n")).toContain("导入前备份：");
+  expect(app.texts()).toContain("采集时间：2026-10-09T08:00:00+08:00");
+  expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
+  await app.press("圣遗物");
+  expect(app.texts().join("\n")).toContain("GladiatorsFinale");
+  await app.press("材料");
+  expect(app.texts()).toContain("SlimeCondensate · 数量 81");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-newer.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450120");
+  await app.press("备份并确认完整导入");
+  await app.press("材料");
+  expect(app.texts()).toContain("SlimeCondensate · 数量 3");
+  const result = app.texts().find((line) => line.startsWith("已导入 UID 123450120 的背包快照。"));
+  expect(result).toBeDefined();
+  const backup = result?.split("导入前备份：")[1] ?? "";
+  await app.clear("inventory-file");
+  await app.type("inventory-file", backup);
+  await app.press("读取 GOOD 文件");
+  expect(app.texts()).toContain("文件采集时间：2026-10-09T08:00:00+08:00");
+  await app.press("预览背包导入至 UID 123450120");
+  expect(app.texts()).toContain("这份背包快照已保存。");
+  expect(app.texts()).not.toContain("备份并确认完整导入");
+}, 60000);
+
+windowsTest("keeps older inventory selectable and reopens separate UID inventories", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450121");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/inventory-good-newer.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450121");
+  await app.press("备份并确认完整导入");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await app.press("读取 GOOD 文件");
+  await app.type("inventory-captured-at", "+08:00");
+  await app.press("预览背包导入至 UID 123450121");
+  expect(app.texts()).toContain("这份快照较旧，导入后可在历史中主动选择。");
+  await app.press("备份并确认完整导入");
+  expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
+  await app.press("背包快照历史");
+  await app.press("查看旧快照：2026-10-09T08:00:00+08:00");
+  expect(app.texts()).toContain("正在查看旧快照");
+  await app.press("材料");
+  expect(app.texts()).toContain("SlimeCondensate · 数量 81");
+
+  await app.type("game-uid", "123450122");
+  await app.press("创建 UID 数据空间");
+  await app.press("预览背包导入至 UID 123450122");
+  await app.press("备份并确认完整导入");
+  const reopened = await open(".", { width: 1024, height: 1000 });
+  await reopened.press("角色资料");
+  await reopened.press("背包仓库");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("UID 123450122 的背包仓库");
+  expect(reopened.texts()).toContain("SlimeCondensate · 数量 81");
+  await reopened.press("切换至 UID：123450121");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
+  expect(reopened.texts()).toContain("SlimeCondensate · 数量 3");
+  await reopened.press("资料管理");
+  reopened.onDialog(() => "确认删除 UID：123450121");
+  await reopened.press("删除历史记录");
+  await reopened.waitFor("暂无背包快照");
+  await reopened.press("切换至 UID：123450122");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("SlimeCondensate · 数量 81");
+}, 60000);
+
+windowsTest("uses the incomplete-category confirmation and preserves the UID and time in GOOD v3 inventory", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450123");
+  await app.press("创建 UID 数据空间");
+  await app.type("game-uid", "123450124");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/inventory-good-kamera-empty-artifacts.json");
+  await app.press("读取 GOOD 文件");
+  expect(app.texts()).not.toContain("预览背包导入至 UID 123450123");
+  await app.press("确认缺失类别的库存为空");
+  await app.press("预览背包导入至 UID 123450123");
+  expect(app.texts()).toContain("UID 123450123 · 武器 1 件 · 圣遗物 0 件 · 材料 1 种");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-leyline.json");
+  await app.press("读取 GOOD 文件");
+  expect(app.texts()).toContain("文件声明游戏 UID：123450123");
+  expect(app.texts()).toContain("文件采集时间：2026-10-14T19:06:40.123Z");
+  expect(app.texts()).not.toContain("预览背包导入至 UID 123450124");
+  await app.press("预览背包导入至 UID 123450123");
+  await app.press("备份并确认完整导入");
+  expect(app.texts()).toContain("暂无背包快照");
+  await app.press("切换至 UID：123450123");
+  expect(app.texts()).toContain("采集时间：2026-10-14T19:06:40.123Z");
+  await app.press("圣遗物");
+  expect(app.texts().join("\n")).toContain("GladiatorsFinale");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-duplicate-material.json");
+  await app.press("读取 GOOD 文件");
+  expect(app.texts().join("\n")).toContain("材料标识重复：Mora");
+  expect(app.texts()).not.toContain("预览背包导入至 UID 123450123");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-leyline-partial.json");
+  await app.press("读取 GOOD 文件");
+  expect(app.texts()).toContain("文件包含未完整共享的背包数据，请导出完整的武器、圣遗物和材料。");
+  expect(app.texts()).not.toContain("预览背包导入至 UID 123450123");
+}, 60000);
+
 windowsTest("creates an overall backup and previews restoring cleared wishes and achievement progress", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");
