@@ -1,5 +1,6 @@
-//! Provides the Windows launcher's UIAF import, export, and achievement progress.
+//! Provides the Windows launcher's achievement progress and UIAF file exchange.
 mod archive;
+mod progress;
 mod store;
 
 use crate::archive_json::file_button;
@@ -12,8 +13,6 @@ use nsh_core::prelude::*;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use store::Preview;
-
-const PAGE_SIZE: usize = 30;
 
 #[derive(Clone)]
 struct ImportControls {
@@ -204,72 +203,5 @@ pub(crate) fn section(
         .child(controls.file_input())
         .child(controls.loaded(profile))
         .child(text(move || controls.message.get()))
-        .child(progress(database, profile, revision))
-}
-
-fn progress(database: Rc<PathBuf>, profile: Signal<Profile>, revision: Signal<u64>) -> View {
-    let position = signal((String::new(), 0_usize));
-    let export_message = signal(String::new());
-    view()
-        .gap_2()
-        .child(dynamic(move || {
-            revision.get();
-            let Some(uid) = profile.get().active_uid else {
-                return view().child(text("请在角色资料中创建或选择游戏 UID"));
-            };
-            let content = view()
-                .gap_2()
-                .child(text(format!("UID {uid} 的成就进度")).font_weight(FontWeight::BOLD));
-            let records = match store::records(&database, &uid) {
-                Ok(records) if records.is_empty() => return content.child(text("暂无成就进度")),
-                Ok(records) => records,
-                Err(error) => return content.child(text(error)),
-            };
-            let (shown_uid, index) = position.get();
-            let page_count = records.len().div_ceil(PAGE_SIZE);
-            let index = if shown_uid == uid {
-                index.min(page_count - 1)
-            } else {
-                0
-            };
-            let completed = records.iter().filter(|record| record.completed()).count();
-            let previous = uid.clone();
-            let next = uid.clone();
-            let database = database.clone();
-            content
-                .child(text(format!(
-                    "已完成 {completed} 项 · 共 {} 项 · 第 {}/{page_count} 页",
-                    records.len(),
-                    index + 1
-                )))
-                .children(
-                    records
-                        .iter()
-                        .skip(index * PAGE_SIZE)
-                        .take(PAGE_SIZE)
-                        .map(|record| text(record.label()).into_element()),
-                )
-                .child(
-                    view()
-                        .flex_row()
-                        .gap_2()
-                        .child((index > 0).then(|| {
-                            button("上一页", move || {
-                                position.set((previous.clone(), index - 1));
-                            })
-                        }))
-                        .child((index + 1 < page_count).then(|| {
-                            button("下一页", move || position.set((next.clone(), index + 1)))
-                        })),
-                )
-                .child(button("导出 UIAF v1.1", move || {
-                    let folder = database.with_file_name("achievement-exports");
-                    match store::export(&database, &uid, &folder) {
-                        Ok(path) => export_message
-                            .set(format!("UID {uid} 的 UIAF v1.1 已导出：{}", path.display())),
-                        Err(error) => export_message.set(format!("导出失败：{error}")),
-                    }
-                }))
-        }))
-        .child(text(move || export_message.get()))
+        .child(progress::section(database, profile, revision))
 }

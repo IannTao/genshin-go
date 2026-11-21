@@ -4,10 +4,17 @@ On Windows, use **首页** to confirm an existing installation and launch the ga
 
 ## Windows achievement progress
 
-Open **成就** in the sidebar to view the current UID's achievement progress and exchange
-[UIAF v1.1 files](https://uigf.org/zh/standards/uiaf.html). Create or switch UID data spaces
-in **角色资料**. Select a JSON file or enter its path, choose the destination UID, and
-review additions, updates, duplicates, and conflicts before clicking **备份并确认导入**.
+Create or switch UID data spaces in **角色资料**, then open **成就** to browse the offline
+Simplified Chinese achievement catalog. Search by name or ID and use **标记完成** or
+**取消完成** to update the selected UID's completion status. Multi-stage achievements
+show the stage and its target value. Changes are saved in
+local SQLite and work without signing in. Manual edits keep any recorded numeric progress.
+The catalog contains 1,909 IDs from the [genshin-db v5.2.16 release for game version 7.2](https://github.com/theBowja/genshin-db/releases/tag/v5.2.16).
+
+To exchange [UIAF v1.1 files](https://uigf.org/zh/standards/uiaf.html), select a JSON file
+or enter its path, choose the destination UID, and review additions, updates, duplicates,
+and conflicts before clicking **备份并确认导入**. Imported records for IDs outside the
+catalog appear with their IDs.
 
 The merge keeps the strongest completion status, the greatest progress, and the earliest
 known completion time from completed records. Reimporting identical data leaves progress

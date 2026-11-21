@@ -104,6 +104,32 @@ where
 }
 
 impl Record {
+    /// Represents progress with no observed count or completion time.
+    pub(super) fn unfinished(id: u32) -> Self {
+        Self {
+            id,
+            current: 0,
+            status: Status::Unfinished,
+            timestamp: UNKNOWN_TIME,
+        }
+    }
+
+    /// Applies a manual completion change while preserving the observed count.
+    pub(super) fn with_completion(self, completed: bool) -> Self {
+        if self.completed() == completed {
+            return self;
+        }
+        Self {
+            status: if completed {
+                Status::Finished
+            } else {
+                Status::Unfinished
+            },
+            timestamp: UNKNOWN_TIME,
+            ..self
+        }
+    }
+
     /// Indicates whether the achievement is finished or its reward is claimed.
     pub(super) fn completed(self) -> bool {
         self.status >= Status::Finished
@@ -117,7 +143,12 @@ impl Record {
             Status::Finished => "已完成",
             Status::Claimed => "已领取",
         };
-        format!("成就 {} · {status} · 进度 {}", self.id, self.current)
+        let progress = if self.current == 0 {
+            "进度未记录".into()
+        } else {
+            format!("进度 {}", self.current)
+        };
+        format!("成就 {} · {status} · {progress}", self.id)
     }
 
     /// Preserves stronger status, known completion time, and the greatest progress.

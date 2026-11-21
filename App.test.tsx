@@ -23,6 +23,63 @@ windowsTest("opens a separate achievement tab from the launcher sidebar", async 
   expect(app.texts()).not.toContain("祈愿记录");
 });
 
+windowsTest("saves and clears manual achievement progress by UID without authorization", async () => {
+  const app = await open(".");
+  await app.press("角色资料");
+  await app.type("game-uid", "123450017");
+  await app.press("创建 UID 数据空间");
+  await app.press("成就");
+  expect(app.texts()).toContain("成就目录 · 原神 7.2");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await app.press("标记完成：风与异乡人（80001）");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+
+  await app.press("角色资料");
+  await app.type("game-uid", "123450117");
+  await app.press("创建 UID 数据空间");
+  const reopened = await open(".");
+  await reopened.press("成就");
+  expect(reopened.texts()).toContain("UID 123450117 的成就进度");
+  expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await reopened.press("标记完成：风与异乡人（80001）");
+  await reopened.press("角色资料");
+  await reopened.press("切换至 UID：123450017");
+  await reopened.press("成就");
+  expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+  await reopened.press("取消完成：风与异乡人（80001）");
+  expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成 · 进度未记录");
+  await reopened.press("标记完成：风与异乡人（80001）");
+
+  await reopened.press("角色资料");
+  await reopened.press("资料管理");
+  reopened.onDialog(() => "确认删除 UID：123450017");
+  await reopened.press("删除历史记录");
+  await reopened.waitFor("已清除 UID 123450017 的本机历史记录");
+  await reopened.press("成就");
+  expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await reopened.press("角色资料");
+  await reopened.press("切换至 UID：123450117");
+  await reopened.press("成就");
+  expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+});
+
+windowsTest("browses the achievement catalog and searches by name or ID", async () => {
+  const app = await open(".");
+  await app.press("角色资料");
+  await app.type("game-uid", "123450217");
+  await app.press("创建 UID 数据空间");
+  await app.press("成就");
+  await app.press("下一页");
+  expect(app.texts()).toContain("已完成 0 项 · 共 1909 项 · 第 2/64 页");
+  await app.type("achievement-search", "寒冬的冒险家");
+  expect(app.texts()).toContain("寒冬的冒险家·其二 · 第 1 阶段 · 目标 3 · 成就 86102 · 未完成");
+  expect(app.texts()).toContain("寒冬的冒险家·其二 · 第 2 阶段 · 目标 7 · 成就 86103 · 未完成");
+  await app.clear("achievement-search");
+  await app.type("achievement-search", "86102");
+  expect(app.texts()).toContain("已完成 0 项 · 共 1 项 · 第 1/1 页");
+  expect(app.texts()).toContain("寒冬的冒险家·其二 · 第 1 阶段 · 目标 3 · 成就 86102 · 未完成");
+});
+
 windowsTest("previews and imports UIAF into an explicitly selected UID", async () => {
   const app = await open(".");
   await app.press("角色资料");
@@ -44,12 +101,14 @@ windowsTest("previews and imports UIAF into an explicitly selected UID", async (
   await app.press("角色资料");
   await app.press("切换至 UID：123450018");
   await app.press("成就");
-  expect(app.texts()).toContain("成就 80001 · 已领取 · 进度 1");
-  expect(app.texts()).toContain("成就 80002 · 未完成 · 进度 30");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已领取 · 进度 1");
+  expect(app.texts()).toContain("千嶂万仞 · 成就 80002 · 未完成 · 进度 30");
   await app.press("预览导入至 UID 123450018");
   expect(app.texts()).toContain("导入至 UID 123450018：新增 0，更新 0，无变化 2");
   expect(app.texts()).toContain("重复 2，冲突 0（冲突按状态与进度自动合并）");
   expect(app.texts()).not.toContain("备份并确认导入");
   await app.press("导出 UIAF v1.1");
   expect(app.texts().join("\n")).toContain("UID 123450018 的 UIAF v1.1 已导出：");
+  await app.press("标记完成：千嶂万仞（80002）");
+  expect(app.texts()).toContain("千嶂万仞 · 成就 80002 · 已完成 · 进度 30");
 });

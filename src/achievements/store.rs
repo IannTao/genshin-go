@@ -1,7 +1,7 @@
 use super::archive::{Archive, Record, encode};
 use crate::account_store::{database_error, open};
 use crate::native_environment::atomic_write;
-use rusqlite::{Connection, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -101,24 +101,60 @@ pub(super) fn import(path: &Path, preview: &Preview) -> Result<PathBuf, String> 
         &preview.before,
     )
     .map_err(|error| format!("导入前备份失败：{error}"))?;
-    {
-        let mut upsert = write
-            .prepare(
-                "INSERT INTO achievement_records (uid, achievement_id, record_json)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT (uid, achievement_id)
-                 DO UPDATE SET record_json = excluded.record_json",
-            )
-            .map_err(|error| database_error(&error))?;
-        for record in &preview.changes {
-            let json = serde_json::to_string(record).map_err(|error| error.to_string())?;
-            upsert
-                .execute(params![uid, record.id, json])
-                .map_err(|error| database_error(&error))?;
-        }
-    }
+    upsert_records(&write, uid, &preview.changes)?;
     write.commit().map_err(|error| database_error(&error))?;
     Ok(backup)
+}
+
+/// Saves a manual completion change against the latest record for this UID.
+pub(super) fn set_completion(
+    path: &Path,
+    uid: &str,
+    id: u32,
+    completed: bool,
+) -> Result<(), String> {
+    let mut db = open(path)?;
+    let write = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| database_error(&error))?;
+    let saved = write
+        .query_row(
+            "SELECT record_json FROM achievement_records WHERE uid = ?1 AND achievement_id = ?2",
+            params![uid, id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| database_error(&error))?;
+    let record = saved
+        .as_deref()
+        .map_or_else(|| Ok(Record::unfinished(id)), decode_record)?;
+    let updated = record.with_completion(completed);
+    if record != updated {
+        upsert_records(&write, uid, &[updated])?;
+    }
+    write.commit().map_err(|error| database_error(&error))
+}
+
+fn upsert_records(db: &Connection, uid: &str, records: &[Record]) -> Result<(), String> {
+    let mut upsert = db
+        .prepare(
+            "INSERT INTO achievement_records (uid, achievement_id, record_json)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT (uid, achievement_id)
+             DO UPDATE SET record_json = excluded.record_json",
+        )
+        .map_err(|error| database_error(&error))?;
+    for record in records {
+        let json = serde_json::to_string(record).map_err(|error| error.to_string())?;
+        upsert
+            .execute(params![uid, record.id, json])
+            .map_err(|error| database_error(&error))?;
+    }
+    Ok(())
+}
+
+fn decode_record(json: &str) -> Result<Record, String> {
+    serde_json::from_str(json).map_err(|error| format!("读取成就进度失败：{error}"))
 }
 
 fn load_records(db: &Connection, uid: &str) -> Result<Vec<Record>, String> {
@@ -143,7 +179,7 @@ fn load_records(db: &Connection, uid: &str) -> Result<Vec<Record>, String> {
         .map_err(|error| database_error(&error))?
         .map(|json| {
             let json = json.map_err(|error| database_error(&error))?;
-            serde_json::from_str(&json).map_err(|error| format!("读取成就进度失败：{error}"))
+            decode_record(&json)
         })
         .collect()
 }
