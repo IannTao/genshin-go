@@ -1,0 +1,15 @@
+{
+  "sessionId": "SESSION",
+  "revision": 1,
+  "updatedAt": 1795219200000,
+  "data": {
+    "format": "GOOD",
+    "version": 3,
+    "source": "yas-GOODScanner",
+    "metadata": { "uid": "GAME_UID" },
+    "characters": [
+      { "key": "Traveler", "element": "Anemo", "level": 80, "ascension": 5, "constellation": 4, "talent": { "auto": 6, "skill": 7, "burst": 8 } },
+      { "key": "Traveler", "element": "Geo", "level": 80, "ascension": 5, "constellation": 2, "talent": { "auto": 5, "skill": 6, "burst": 7 } }
+    ]
+  }
+}

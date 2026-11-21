@@ -21,6 +21,8 @@ pub mod launcher;
 mod native_environment;
 pub mod profile;
 #[cfg(target_os = "windows")]
+mod scanner;
+#[cfg(target_os = "windows")]
 mod wishes;
 
 #[native_module("genshin-go/native")]

@@ -11,6 +11,13 @@ pub struct NativeEnvironment {
 }
 
 impl NativeEnvironment {
+    /// Uses an explicit directory for the launcher's local application data.
+    pub(crate) fn in_directory(directory: &Path) -> Self {
+        Self {
+            settings: Ok(directory.join("settings.json")),
+        }
+    }
+
     /// Creates the native environment for the current user.
     pub fn new() -> Self {
         Self {

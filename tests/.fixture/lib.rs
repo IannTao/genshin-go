@@ -14,6 +14,9 @@ use std::{
 const CONFIRMED_WITH_NEW_COOKIE: u32 = 7;
 const RENEWED_COOKIE: &str = "fixture-renewed-cookie";
 
+#[cfg(target_os = "windows")]
+mod scanner;
+
 enum DownloadOutcome {
     Interrupted,
     Complete,
@@ -28,6 +31,9 @@ fn claimed(completion: Completion) -> SignInResult {
 }
 
 struct Environment {
+    #[cfg(target_os = "windows")]
+    scanner: Rc<RefCell<Option<scanner::Scanner>>>,
+    launches: Signal<u32>,
     profile: RefCell<Profile>,
     revision: Cell<u64>,
     cookie: RefCell<Option<String>>,
@@ -53,6 +59,10 @@ struct Environment {
 }
 
 impl LauncherEnvironment for Environment {
+    #[cfg(target_os = "windows")]
+    fn uid_database_path(&self) -> Option<Result<PathBuf, String>> {
+        self.scanner.borrow().as_ref()?.local.uid_database_path()
+    }
     fn community_clock(&self) -> Option<Clock> {
         Some(Clock {
             day: self.sign_in_day.get_untracked(),
@@ -97,9 +107,17 @@ impl LauncherEnvironment for Environment {
         Box::pin(async move { valid.ok_or_else(|| "账号授权不存在，请重新扫码".into()) })
     }
     fn load_profile(&self) -> Result<Profile, String> {
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = self.scanner.borrow().as_ref() {
+            return scanner.local.load_profile();
+        }
         Ok(self.profile.borrow().clone())
     }
     fn select_uid(&self, uid: &str, create: bool) -> Result<Profile, String> {
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = self.scanner.borrow().as_ref() {
+            return scanner.local.select_uid(uid, create);
+        }
         let mut profile = self.profile.borrow_mut();
         if create && !profile.uids.iter().any(|saved| saved == uid) {
             profile.uids.push(uid.into());
@@ -108,6 +126,10 @@ impl LauncherEnvironment for Environment {
         Ok(profile.clone())
     }
     fn delete_uid_history(&self, uid: &str) -> Result<Profile, String> {
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = self.scanner.borrow().as_ref() {
+            return scanner.local.delete_uid_history(uid);
+        }
         let profile = self.profile.borrow();
         if !profile.uids.iter().any(|saved| saved == uid) {
             return Err("该 UID 数据空间不存在".into());
@@ -232,6 +254,7 @@ impl LauncherEnvironment for Environment {
         }
     }
     fn launch(&self, path: &Path) -> Result<(), String> {
+        self.launches.update(|n| *n += 1);
         if self.fail_launch.get_untracked() {
             return Err("系统拒绝启动".into());
         }
@@ -301,6 +324,9 @@ fn native(registry: &mut Registry) {
 #[component]
 pub fn Fixture() -> impl IntoElement {
     let environment = Rc::new(Environment {
+        #[cfg(target_os = "windows")]
+        scanner: Rc::default(),
+        launches: signal(0),
         profile: RefCell::new(Profile::default()),
         revision: Cell::new(0),
         cookie: RefCell::new(None),
@@ -342,6 +368,10 @@ pub fn Fixture() -> impl IntoElement {
     let fail_launch = environment.fail_launch;
     let launched = environment.launched;
     let generation = signal(0_u32);
+    #[cfg(target_os = "windows")]
+    let scanner = Some(scanner::controls(environment.scanner.clone(), generation, environment.launches));
+    #[cfg(not(target_os = "windows"))]
+    let scanner = None::<View>;
     let sign_in_day = environment.sign_in_day;
     let suspended_seconds = environment.suspended_seconds;
     let sign_in_reply = environment.sign_in_reply;
@@ -351,6 +381,7 @@ pub fn Fixture() -> impl IntoElement {
     let completed_install = environment.install_outcome.clone();
     view()
         .flex_1()
+        .child(scanner)
         .child(
             view()
                 .on_press(move || sign_in_day.update(|day| *day += 1))

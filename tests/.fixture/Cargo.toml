@@ -12,3 +12,6 @@ path = "lib.rs"
 [dependencies]
 nsh-core = "0.4.0"
 nsh-app-genshin-go = { path = "../.." }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+serde_json = "1"

@@ -43,6 +43,7 @@ pub(crate) fn spaces(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
     history_revision: Signal<u64>,
+    roster: Option<impl IntoElement>,
 ) -> impl IntoElement {
     let message = signal(String::new());
     let managing = signal(false);
@@ -116,6 +117,7 @@ pub(crate) fn spaces(
             history_revision,
         ))
         .child(text(move || message.get()))
+        .child(roster)
         .child({
             #[cfg(target_os = "windows")]
             {

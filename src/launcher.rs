@@ -15,6 +15,12 @@ use std::{
 /// Represents an asynchronous directory selection result.
 pub type DirectoryChoice = Pin<Box<dyn Future<Output = Result<Option<PathBuf>, String>>>>;
 
+/// Provides native launcher operations backed by the specified application data directory.
+#[must_use]
+pub fn environment_in(directory: &Path) -> impl LauncherEnvironment + use<> {
+    crate::native_environment::NativeEnvironment::in_directory(directory)
+}
+
 /// External operations used by the launcher's Windows and test environments.
 pub trait LauncherEnvironment {
     /// Samples the community service date and cumulative system suspend time.
@@ -253,11 +259,6 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         game_panel.scroll_to_offset(px(0.0), false);
     };
     let state = signal(find_installations(environment.as_ref()));
-    let directory = DirectoryControls {
-        environment: environment.clone(),
-        state,
-        picking: signal(false),
-    };
     let (profile, profile_error) = match environment.load_profile() {
         Ok(profile) => (profile, None),
         Err(error) => (
@@ -267,6 +268,17 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     };
     let profile = signal(profile);
     let history_revision = signal(0_u64);
+    #[cfg(target_os = "windows")]
+    let scanner = environment
+        .uid_database_path()
+        .map(|path| crate::scanner::Sync::new(path, profile, history_revision));
+    let directory = DirectoryControls {
+        environment: environment.clone(),
+        state,
+        picking: signal(false),
+        #[cfg(target_os = "windows")]
+        scanner: scanner.clone(),
+    };
     let install = InstallSession::new(environment.clone(), move |path| set_default(state, path));
     let community = crate::accounts::community_page(environment.clone(), profile);
     #[cfg(target_os = "windows")]
@@ -279,7 +291,14 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     });
     #[cfg(not(target_os = "windows"))]
     let achievements = None::<Scroll>;
-    let uid_spaces = crate::profile::spaces(environment, profile, history_revision);
+    #[cfg(target_os = "windows")]
+    let (scanner_settings, roster) = (
+        scanner.as_ref().map(crate::scanner::Sync::settings),
+        scanner.as_ref().map(crate::scanner::Sync::roster),
+    );
+    #[cfg(not(target_os = "windows"))]
+    let (scanner_settings, roster) = (None::<View>, None::<View>);
+    let uid_spaces = crate::profile::spaces(environment, profile, history_revision, roster);
     view()
         .flex_1()
         .min_h(px(0.0))
@@ -309,6 +328,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                             .gap_4()
                             .child(install.details())
                             .child(directory.management())
+                            .child(scanner_settings)
                             .child(install.setup()),
                     )
                     .element_ref(&game_panel),
@@ -450,13 +470,13 @@ fn home(
         )
 }
 
-fn launch(environment: &dyn LauncherEnvironment, state: Signal<InstallationState>) {
-    let Some(path) = state.with_untracked(|state| state.launch_directory().map(Path::to_path_buf))
-    else {
-        return;
-    };
-    let directory = match environment.validate(&path) {
-        Ok(directory) => directory,
+fn launch_directory(
+    environment: &dyn LauncherEnvironment,
+    state: Signal<InstallationState>,
+) -> Option<PathBuf> {
+    let path = state.with_untracked(|state| state.launch_directory().map(Path::to_path_buf))?;
+    match environment.validate(&path) {
+        Ok(directory) => Some(directory),
         Err(error) => {
             state.update(|state| {
                 state.directories.retain(|directory| directory != &path);
@@ -464,14 +484,24 @@ fn launch(environment: &dyn LauncherEnvironment, state: Signal<InstallationState
                 state.saved = Some(SavedDirectory::Invalid(path));
                 state.message = format!("启动失败：目录已失效：{error}。请重新选择游戏目录。");
             });
-            return;
+            None
         }
-    };
-    let message = match environment.launch(&directory) {
+    }
+}
+
+fn request_launch(
+    environment: &dyn LauncherEnvironment,
+    state: Signal<InstallationState>,
+    directory: &Path,
+) -> bool {
+    let result = environment.launch(directory);
+    let launched = result.is_ok();
+    let message = match result {
         Ok(()) => "已请求启动游戏".into(),
         Err(error) => format!("启动失败：{error}"),
     };
     state.update(|state| state.message = message);
+    launched
 }
 
 #[derive(Clone)]
@@ -479,6 +509,8 @@ struct DirectoryControls {
     environment: Rc<dyn LauncherEnvironment>,
     state: Signal<InstallationState>,
     picking: Signal<bool>,
+    #[cfg(target_os = "windows")]
+    scanner: Option<Rc<crate::scanner::Sync>>,
 }
 
 impl DirectoryControls {
@@ -488,7 +520,7 @@ impl DirectoryControls {
         open_install: impl Fn() + Copy + 'static,
     ) -> View {
         let state = self.state;
-        let environment = self.environment.clone();
+        let controls = self.clone();
         let ready = move || state.with(|s| s.launch_directory().is_some());
         let picker = install.clone();
         let supports_install = self.environment.supports_install();
@@ -497,13 +529,23 @@ impl DirectoryControls {
             .min_w(px(0.0))
             .items_start()
             .child(
-                action_button("普通启动", move || launch(environment.as_ref(), state))
+                action_button("普通启动", move || controls.launch())
                     .bg(ACCENT)
                     .text_color(white())
                     .px_4()
                     .py_3()
                     .style_when(move || !ready(), Styled::hidden),
             )
+            .child({
+                #[cfg(target_os = "windows")]
+                {
+                    self.scanner.as_ref().map(|s| s.status())
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    None::<View>
+                }
+            })
             .child(self.candidates().style_when(ready, Styled::hidden))
             .child(
                 view()
@@ -524,6 +566,24 @@ impl DirectoryControls {
                         })
                     })),
             )
+    }
+
+    fn launch(&self) {
+        let environment = self.environment.clone();
+        let state = self.state;
+        let Some(directory) = launch_directory(environment.as_ref(), state) else {
+            return;
+        };
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = &self.scanner {
+            scanner.launch(move || {
+                launch_directory(environment.as_ref(), state).is_some_and(|path| {
+                    path == directory && request_launch(environment.as_ref(), state, &path)
+                })
+            });
+            return;
+        }
+        request_launch(environment.as_ref(), state, &directory);
     }
 
     fn candidates(&self) -> View {
@@ -639,6 +699,7 @@ impl DirectoryControls {
             environment,
             state,
             picking,
+            ..
         } = self.clone();
         action_button(label, move || {
             if picking.get_untracked() {

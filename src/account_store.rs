@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 /// Formats an error encountered while accessing the launcher database.
 pub(crate) fn database_error(error: &rusqlite::Error) -> String {
@@ -145,6 +145,11 @@ fn migrate(db: &mut Connection) -> Result<(), String> {
                     PRIMARY KEY (uid, achievement_id)
                 );",
             )
+            .map_err(|error| database_error(&error))?;
+    }
+    if version < 9 {
+        migration
+            .execute_batch(crate::scanner::SCHEMA)
             .map_err(|error| database_error(&error))?;
     }
     migration
@@ -526,6 +531,8 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "ALTER TABLE account_authorization DROP COLUMN revision;
+             DROP TABLE scanner_settings;
+             DROP TABLE owned_characters;
              DROP TABLE achievement_records;
              PRAGMA user_version = 6;
              INSERT INTO uid_spaces VALUES ('123456789');
@@ -572,6 +579,8 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "DROP TABLE wish_records;
+             DROP TABLE scanner_settings;
+             DROP TABLE owned_characters;
              DROP TABLE achievement_records;
              ALTER TABLE account_authorization DROP COLUMN protected_community_cookie;
              PRAGMA user_version = 4;",

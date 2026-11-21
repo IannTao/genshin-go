@@ -2,6 +2,20 @@
 
 On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
+## Windows owned character sync
+
+In **游戏管理**, select the Windows capture edition of `GGScanner.exe` (compatibility
+baseline v2026.11.15) and its local port (default 8765). In GGScanner, select
+Genshin, enable **持续同步（抓包）** and start the manager service. The scanner
+requires administrator privileges and its third-party capture carries account
+risk. Choose **检查扫描连接** to test the port and **保存扫描设置** to enable sync.
+
+Click **普通启动** and log into the game. The launcher reads the running manager's
+loopback service before launch and waits for a new login. A scanner failure
+appears alongside the game launch result. Open **角色资料** and select the UID
+used in the game to view its owned characters, elemental forms, progression,
+source time and local receipt time. **停用下次启动同步** disables future scans.
+
 ## Windows achievement progress
 
 Create or switch UID data spaces in **角色资料**, then open **成就** to browse the offline
