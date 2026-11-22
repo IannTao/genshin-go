@@ -1,5 +1,8 @@
 //! Locally managed game UID spaces and the current verified account.
-use crate::launcher::{LauncherEnvironment, button};
+use crate::keyboard::{
+    FocusHandle, current_focus, register_input, restore_focus, restore_focus_with,
+};
+use crate::launcher::{LauncherEnvironment, button, focusable_button};
 use nsh_base::{alert_dialog, theme};
 use nsh_core::prelude::*;
 use std::rc::Rc;
@@ -117,7 +120,7 @@ fn uid_creation(
     let input = signal(String::new());
     view()
         .gap_2()
-        .child(
+        .child(register_input(
             nsh_core::element::input()
                 .test_id("game-uid")
                 .label("游戏 UID")
@@ -127,7 +130,7 @@ fn uid_creation(
                 .placeholder("输入要添加的游戏 UID")
                 .value(move || input.get())
                 .on_change(move |value: &str| input.set(value.to_owned())),
-        )
+        ))
         .child(button("创建 UID 数据空间", move || {
             let value = input.get_untracked();
             let uid = value.trim();
@@ -152,6 +155,18 @@ fn uid_creation(
         }))
 }
 
+#[derive(Clone, Copy)]
+struct HistoryControls {
+    owner: Owner,
+    profile: Signal<Profile>,
+    managing: Signal<bool>,
+    message: Signal<String>,
+    revision: Signal<u64>,
+    growth_revision: Signal<u64>,
+    manage_handle: Signal<Option<FocusHandle>>,
+    focus_manage_button: Signal<bool>,
+}
+
 fn history_controls(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
@@ -160,71 +175,95 @@ fn history_controls(
     revision: Signal<u64>,
     growth_revision: Signal<u64>,
 ) -> impl IntoElement {
-    let owner = Owner::current();
+    let controls = HistoryControls {
+        owner: Owner::current(),
+        profile,
+        managing,
+        message,
+        revision,
+        growth_revision,
+        manage_handle: signal(None),
+        focus_manage_button: signal(false),
+    };
     dynamic(move || {
-        profile.get().active_uid.map(|uid| {
+        controls.profile.get().active_uid.map(|uid| {
             let environment = environment.clone();
-            view()
-                .gap_2()
-                .child(button("资料管理", move || {
-                    managing.update(|open| *open = !*open);
-                }))
-                .child(managing.get().then(|| {
-                    button("删除历史记录", move || {
-                        let uid = uid.clone();
-                        let environment = environment.clone();
-                        message.set(String::new());
-                        owner.run(|| {
-                            confirm_history_deletion(
-                                environment,
-                                uid,
-                                profile,
-                                managing,
-                                message,
-                                revision,
-                                growth_revision,
-                            );
+            let (manage_button, handle) = focusable_button("资料管理", move |_| {
+                controls.managing.update(|open| *open = !*open);
+            });
+            controls.manage_handle.set(handle);
+            if controls.focus_manage_button.get_untracked() {
+                controls.focus_manage_button.set(false);
+                restore_focus(handle);
+            }
+            let delete_uid = uid.clone();
+            let delete_env = environment;
+            view().gap_2().child(manage_button).child(when(
+                move || controls.managing.get(),
+                move || {
+                    let uid = delete_uid.clone();
+                    let environment = delete_env.clone();
+                    let (delete_button, _) =
+                        focusable_button("删除历史记录", move |trigger| {
+                            let uid = uid.clone();
+                            let environment = environment.clone();
+                            controls.message.set(String::new());
+                            controls.owner.run(|| {
+                                controls.confirm_deletion(environment, uid, trigger);
+                            });
                         });
-                    })
-                }))
+                    delete_button
+                },
+            ))
         })
     })
 }
 
-fn confirm_history_deletion(
-    environment: Rc<dyn LauncherEnvironment>,
-    uid: String,
-    profile: Signal<Profile>,
-    managing: Signal<bool>,
-    message: Signal<String>,
-    revision: Signal<u64>,
-    growth_revision: Signal<u64>,
-) {
-    let answer = alert_dialog()
-        .title(format!("删除 UID {uid} 的历史记录？"))
-        .description(
-            "将清除该 UID 在本机数据库中保存的各类历史。UIGF、UIAF 和背包的备份及导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
-        )
-        // The first button receives the Windows default focus when there is no regular action.
-        .cancel("cancel", "取消")
-        .destructive("delete", format!("确认删除 UID：{uid}"))
-        .show();
-    spawn(async move {
-        if !answer
-            .await
-            .is_ok_and(|result| result.action.as_deref() == Some("delete"))
-        {
-            return;
-        }
-        match environment.delete_uid_history(&uid) {
-            Ok(state) => {
-                profile.set(state);
-                revision.update(|revision| *revision += 1);
-                growth_revision.update(|revision| *revision += 1);
-                managing.set(false);
-                message.set(format!("已清除 UID {uid} 的本机历史记录"));
+impl HistoryControls {
+    fn confirm_deletion(
+        self,
+        environment: Rc<dyn LauncherEnvironment>,
+        uid: String,
+        trigger: Option<FocusHandle>,
+    ) {
+        let focus = current_focus();
+        let answer = alert_dialog()
+            .title(format!("删除 UID {uid} 的历史记录？"))
+            .description(format!(
+                "将清除 UID {uid} 在本机数据库中的祈愿、成就、已拥有角色、背包、养成计划与手填库存。备份与导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的记录和米游社授权会保留。"
+            ))
+            // The first button receives the Windows default focus when there is no regular action.
+            .cancel("cancel", "取消")
+            .destructive("delete", format!("确认删除 UID：{uid}"))
+            .show();
+        spawn(async move {
+            if !answer
+                .await
+                .is_ok_and(|result| result.action.as_deref() == Some("delete"))
+            {
+                restore_focus_with(focus.as_ref(), trigger);
+                return;
             }
-            Err(error) => message.set(format!("删除历史记录失败：{error}")),
-        }
-    });
+            match environment.delete_uid_history(&uid) {
+                Ok(state) => {
+                    let profile_changed = self.profile.get_untracked() != state;
+                    self.managing.set(false);
+                    if profile_changed {
+                        self.focus_manage_button.set(true);
+                    }
+                    self.profile.set(state);
+                    self.revision.update(|revision| *revision += 1);
+                    self.growth_revision.update(|revision| *revision += 1);
+                    self.message.set(format!("已清除 UID {uid} 的本机历史记录"));
+                    if !profile_changed {
+                        restore_focus_with(focus.as_ref(), self.manage_handle.get_untracked());
+                    }
+                }
+                Err(error) => {
+                    self.message.set(format!("删除历史记录失败：{error}"));
+                    restore_focus_with(focus.as_ref(), trigger);
+                }
+            }
+        });
+    }
 }

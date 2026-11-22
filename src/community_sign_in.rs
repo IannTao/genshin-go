@@ -145,10 +145,18 @@ impl Calendar {
     }
 
     fn history_rows(&self) -> impl Iterator<Item = String> + '_ {
-        self.entries
-            .range(..self.day)
-            .rev()
-            .filter_map(|(&day, status)| calendar_row(day, status))
+        let today = i32::try_from(self.day)
+            .ok()
+            .and_then(chrono::NaiveDate::from_epoch_days);
+        (1..=6).filter_map(move |offset| {
+            let date = today?.checked_sub_days(chrono::Days::new(offset))?;
+            let label = self
+                .day
+                .checked_sub(offset)
+                .and_then(|day| self.entries.get(&day))
+                .map_or_else(|| "未检查".into(), Status::reward_label);
+            Some(format!("{date} · {label}"))
+        })
     }
 }
 
@@ -313,4 +321,74 @@ async fn attempt(
             .community_sign_in(account.clone(), day, allow_submission)
             .await,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claimed_result(points: Option<u64>) -> SignInResult {
+        SignInResult {
+            completion: Completion::Signed,
+            reward_claimed: true,
+            reward_points: points,
+        }
+    }
+
+    #[test]
+    fn calendar_lists_all_six_previous_beijing_dates_and_marks_unchecked_days() {
+        let mut calendar = Calendar {
+            day: 20_779, // 2026-11-22
+            ..Calendar::default()
+        };
+        calendar.record(Status::Complete(claimed_result(Some(30))));
+
+        let rows: Vec<String> = calendar.history_rows().collect();
+        assert_eq!(
+            rows,
+            vec![
+                "2026-11-21 · 未检查",
+                "2026-11-20 · 未检查",
+                "2026-11-19 · 未检查",
+                "2026-11-18 · 未检查",
+                "2026-11-17 · 未检查",
+                "2026-11-16 · 未检查",
+            ]
+        );
+    }
+
+    #[test]
+    fn calendar_keeps_checked_results_alongside_skipped_unchecked_dates_within_seven_days() {
+        let mut calendar = Calendar {
+            day: 20_776, // 2026-11-19
+            ..Calendar::default()
+        };
+        calendar.record(Status::Complete(claimed_result(Some(30))));
+        calendar.advance(20_777); // 2026-11-20
+        calendar.record(Status::Failed(Failure::Timeout));
+        // Skip 2026-11-21 completely, advance straight to 2026-11-22.
+        calendar.advance(20_779);
+        calendar.record(Status::Complete(SignInResult {
+            completion: Completion::AlreadySigned,
+            reward_claimed: false,
+            reward_points: None,
+        }));
+
+        assert_eq!(
+            calendar_row(calendar.day, calendar.today()).as_deref(),
+            Some("2026-11-22 · 已签到 · 领取待确认")
+        );
+        let rows: Vec<String> = calendar.history_rows().collect();
+        assert_eq!(
+            rows,
+            vec![
+                "2026-11-21 · 未检查",
+                "2026-11-20 · 失败",
+                "2026-11-19 · 已领取 · 30 米游币",
+                "2026-11-18 · 未检查",
+                "2026-11-17 · 未检查",
+                "2026-11-16 · 未检查",
+            ]
+        );
+    }
 }

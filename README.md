@@ -211,13 +211,13 @@ Upgrading from the multi-account version removes its saved authorizations. You c
 
 In **管理授权**, choose **移除账号** and confirm the displayed account to remove its 米游社 authorization. Automatic sign-in requires authorization again. The UID spaces and their records stay available. Scanning again verifies the account's game UID and links it to the existing space.
 
-To clear local records, select the UID in **角色资料**, open **资料管理**, and choose **删除历史记录**. Confirm the full UID displayed to clear every category of local history for that UID. The UID space, other UIDs' records, and 米游社 authorization stay available. In the Windows confirmation dialog, Enter defaults to **取消**.
+To clear local records, select the UID in **角色资料**, open **资料管理**, and choose **删除历史记录**. Confirm the full UID displayed to clear every category of local history for that UID. The UID space, other UIDs' records, backup and export files, and 米游社 authorization stay available. Keyboard users can Tab through controls in reading order; in both Windows confirmation dialogs, Tab stays inside the dialog, Enter defaults to **取消**, Esc returns safely, and focus returns to the trigger button.
 
 ## Windows community sign-in
 
 The sole saved 米哈游账号 is the sign-in account. The launcher shows **社区签到** and checks for the day's unfinished community sign-in when opened, at Beijing midnight, and after Windows resumes. Switch UID data spaces independently. The launcher only runs checks while it is open.
 
-Open **米游社** to see the current 米哈游账号, today's sign-in result, and the **社区签到奖励日历** at the top of the page. The calendar also shows results checked during the current session in the past six Beijing dates. It displays the reward amount from the 米游社 task definition when 米游社 confirms delivery. If sign-in succeeds and delivery is still unconfirmed, use **检查奖励领取** next to today's result to refresh the reward status.
+Open **米游社** to see the current 米哈游账号, today's sign-in result, and the **社区签到奖励日历** at the top of the page. The calendar shows the past seven Beijing dates, including results checked during the current session and `未检查` for unchecked dates. It displays the reward amount from the 米游社 task definition when 米游社 confirms delivery. If sign-in succeeds and delivery is still unconfirmed, use **检查奖励领取** next to today's result to refresh the reward status.
 
 Use **重试社区签到** next to today's result after a failure. If 米游社 requires verification, complete verification or sign-in in the app, then retry. If the launcher asks you to scan again, use **重新扫码** next to the result to renew the same account. Older authorizations may need a fresh scan to supply the separately encrypted community sign-in session. See the [T11 sign-in validation](docs/validation/t11.md) and [T13 calendar validation](docs/validation/t13.md).
 

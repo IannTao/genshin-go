@@ -371,19 +371,39 @@ static HOME_LANDSCAPE: LazyLock<String> = LazyLock::new(|| {
     )
 });
 
-fn action_button(label: impl Into<String>, action: impl Fn() + 'static) -> View {
+fn button_frame(label: impl Into<String>) -> View {
     view()
         .px_3()
         .py_2()
         .rounded(px(8.0))
         .role(AccessibilityRole::Button)
-        .on_press(action)
         .child(text(label.into()).min_w(px(0.0)))
+}
+
+fn action_button(label: impl Into<String>, action: impl Fn() + 'static) -> View {
+    action_button_with(label, action, None).0
+}
+
+fn action_button_with(
+    label: impl Into<String>,
+    action: impl Fn() + 'static,
+    enabled: Option<Rc<dyn Fn() -> bool>>,
+) -> (View, Option<crate::keyboard::FocusHandle>) {
+    crate::keyboard::register_button(button_frame(label), Rc::new(action), enabled)
 }
 
 /// Renders an accessible button with the launcher's shared styling.
 pub(crate) fn button(label: impl Into<String>, action: impl Fn() + 'static) -> impl IntoElement {
     action_button(label, action).bg(CONTROL).text_color(INK)
+}
+
+/// Renders a shared button whose handler receives its keyboard focus handle.
+pub(crate) fn focusable_button(
+    label: impl Into<String>,
+    action: impl Fn(Option<crate::keyboard::FocusHandle>) + 'static,
+) -> (View, Option<crate::keyboard::FocusHandle>) {
+    let base = button_frame(label).bg(CONTROL).text_color(INK);
+    crate::keyboard::register_button_with_handle(base, action, None)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -498,6 +518,7 @@ struct WorkbenchSession {
 
 /// Renders the same launcher with either the Windows environment or a test host.
 pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
+    let _keyboard = crate::keyboard::KeyboardFocus::install();
     let page = signal(Page::Home);
     let appearance = WorkbenchAppearance::new();
     let game_panel = element_ref();
@@ -721,24 +742,28 @@ fn topbar_icon_button(
     icon: impl Fn() -> &'static str + 'static,
     action: impl Fn() + 'static,
 ) -> View {
-    view()
-        .test_id(test_id)
-        .w(px(34.0))
-        .h(px(34.0))
-        .rounded(px(6.0))
-        .items_center()
-        .justify_center()
-        .role(AccessibilityRole::Button)
-        .label(label)
-        .accessibility_state(state)
-        .on_press(action)
-        .hover(|style| style.bg(NAV_HOVER_BG))
-        .tooltip(styled_tooltip(Placement::Bottom, 6.0, false, label))
-        .child(
-            svg(move || ImageSrc::svg_markup(icon()))
-                .w(px(20.0))
-                .h(px(20.0)),
-        )
+    crate::keyboard::register_button(
+        view()
+            .test_id(test_id)
+            .w(px(34.0))
+            .h(px(34.0))
+            .rounded(px(6.0))
+            .items_center()
+            .justify_center()
+            .role(AccessibilityRole::Button)
+            .label(label)
+            .accessibility_state(state)
+            .hover(|style| style.bg(NAV_HOVER_BG))
+            .tooltip(styled_tooltip(Placement::Bottom, 6.0, false, label))
+            .child(
+                svg(move || ImageSrc::svg_markup(icon()))
+                    .w(px(20.0))
+                    .h(px(20.0)),
+            ),
+        Rc::new(action),
+        None,
+    )
+    .0
 }
 
 fn topbar(appearance: WorkbenchAppearance) -> View {
@@ -928,15 +953,25 @@ fn settings_page(
             move || tab.set(SettingsTab::Backup),
         ));
     }
-    let appearance_panel = appearance_settings(appearance)
-        .style_when(move || tab.get() != SettingsTab::Appearance, Styled::hidden);
+    let appearance_panel = crate::keyboard::with_scope(
+        move || tab.get_untracked() == SettingsTab::Appearance,
+        || {
+            appearance_settings(appearance)
+                .style_when(move || tab.get() != SettingsTab::Appearance, Styled::hidden)
+        },
+    );
     let mut root = view().gap_4().child(tabs).child(appearance_panel);
     #[cfg(target_os = "windows")]
     if let Some(backup) = backup_section {
-        let backup_panel = view()
-            .test_id("settings-backup")
-            .style_when(move || tab.get() != SettingsTab::Backup, Styled::hidden)
-            .child(backup());
+        let backup_panel = crate::keyboard::with_scope(
+            move || tab.get_untracked() == SettingsTab::Backup,
+            move || {
+                view()
+                    .test_id("settings-backup")
+                    .style_when(move || tab.get() != SettingsTab::Backup, Styled::hidden)
+                    .child(backup())
+            },
+        );
         root = root.child(backup_panel);
     }
     #[cfg(not(target_os = "windows"))]
@@ -1040,7 +1075,7 @@ fn page_button(page: Signal<Page>, target: Page, appearance: WorkbenchAppearance
                         .style_when(move || appearance.is_collapsed(), Styled::hidden),
                 ),
         );
-    button.on_press(move || page.set(target))
+    crate::keyboard::register_button(button, Rc::new(move || page.set(target)), None).0
 }
 
 fn panel<E: IntoElement>(
@@ -1049,7 +1084,7 @@ fn panel<E: IntoElement>(
     appearance: WorkbenchAppearance,
     content: impl FnOnce() -> E,
 ) -> Scroll {
-    let body = content();
+    let body = crate::keyboard::with_scope(move || page.get_untracked() == target, content);
     scroll()
         .flex_1()
         .style_when(move || page.get() != target, Styled::hidden)
@@ -1194,21 +1229,24 @@ impl DirectoryControls {
         let state = self.state;
         let controls = self.clone();
         let ready = move || state.with(|s| s.launch_directory().is_some());
+        let ready_untracked = move || state.with_untracked(|s| s.launch_directory().is_some());
         let picker = install.clone();
         let supports_install = self.environment.supports_install();
+        let empty_home =
+            move || !ready_untracked() && state.with_untracked(|s| s.directories.is_empty());
         view()
             .w_full()
             .min_w(px(0.0))
             .items_start()
-            .child(
+            .child(crate::keyboard::with_scope(ready_untracked, move || {
                 action_button("普通启动", move || controls.launch())
                     .test_id("launcher-ordinary-launch")
                     .bg(ACCENT)
                     .text_color(white())
                     .px_4()
                     .py_3()
-                    .style_when(move || !ready(), Styled::hidden),
-            )
+                    .style_when(move || !ready(), Styled::hidden)
+            }))
             .child({
                 #[cfg(target_os = "windows")]
                 {
@@ -1219,11 +1257,14 @@ impl DirectoryControls {
                     None::<View>
                 }
             })
-            .child(
-                self.candidates(Some("launcher-home-candidate-path"))
-                    .style_when(ready, Styled::hidden),
-            )
-            .child(
+            .child(crate::keyboard::with_scope(
+                move || !ready_untracked(),
+                || {
+                    self.candidates(Some("launcher-home-candidate-path"))
+                        .style_when(ready, Styled::hidden)
+                },
+            ))
+            .child(crate::keyboard::with_scope(empty_home, || {
                 view()
                     .flex_row()
                     .flex_wrap()
@@ -1240,8 +1281,8 @@ impl DirectoryControls {
                                 picker.pick();
                             }
                         })
-                    })),
-            )
+                    }))
+            }))
     }
 
     fn launch(&self) {
@@ -1317,13 +1358,20 @@ impl DirectoryControls {
                     .collect::<Vec<_>>()
             }))
             .child(
-                action_button("确认保存目录", move || {
-                    if let Some(path) =
-                        state.with_untracked(|s| s.chosen_candidate().map(Path::to_path_buf))
-                    {
-                        select(environment.as_ref(), state, &path);
-                    }
-                })
+                action_button_with(
+                    "确认保存目录",
+                    move || {
+                        if let Some(path) =
+                            state.with_untracked(|s| s.chosen_candidate().map(Path::to_path_buf))
+                        {
+                            select(environment.as_ref(), state, &path);
+                        }
+                    },
+                    Some(Rc::new(move || {
+                        state.with_untracked(|s| s.chosen_candidate().is_some())
+                    })),
+                )
+                .0
                 .disabled(move || state.with(|s| s.chosen_candidate().is_none()))
                 .bg(ACCENT)
                 .text_color(white())
@@ -1366,36 +1414,39 @@ impl DirectoryControls {
             .child(button("更换目录", move || {
                 state.update(|s| s.editing = !s.editing);
             }))
-            .child(
-                view()
-                    .gap_2()
-                    .style_when(move || state.with(|s| !s.editing), Styled::hidden)
-                    .child(button("重新查找", move || {
-                        let mut refreshed = find_installations(refresh_environment.as_ref());
-                        refreshed.editing = true;
-                        state.set(refreshed);
-                    }))
-                    .child(self.candidates(None))
-                    .child(self.directory_picker("选择游戏目录"))
-                    .child(
-                        input()
-                            .test_id("game-directory")
-                            .label("游戏目录")
-                            .h_10()
-                            .px_3()
-                            .bg(CONTROL)
-                            .placeholder("游戏目录（含 YuanShen.exe）")
-                            .value(move || manual.get())
-                            .on_change(move |value: &str| manual.set(value.to_owned())),
-                    )
-                    .child(button("使用此目录", move || {
-                        select(
-                            path_environment.as_ref(),
-                            state,
-                            Path::new(manual.get().trim().trim_matches('"')),
-                        );
-                    })),
-            )
+            .child(crate::keyboard::with_scope(
+                move || state.with_untracked(|s| s.editing),
+                || {
+                    view()
+                        .gap_2()
+                        .style_when(move || state.with(|s| !s.editing), Styled::hidden)
+                        .child(button("重新查找", move || {
+                            let mut refreshed = find_installations(refresh_environment.as_ref());
+                            refreshed.editing = true;
+                            state.set(refreshed);
+                        }))
+                        .child(self.candidates(None))
+                        .child(self.directory_picker("选择游戏目录"))
+                        .child(crate::keyboard::register_input(
+                            input()
+                                .test_id("game-directory")
+                                .label("游戏目录")
+                                .h_10()
+                                .px_3()
+                                .bg(CONTROL)
+                                .placeholder("游戏目录（含 YuanShen.exe）")
+                                .value(move || manual.get())
+                                .on_change(move |value: &str| manual.set(value.to_owned())),
+                        ))
+                        .child(button("使用此目录", move || {
+                            select(
+                                path_environment.as_ref(),
+                                state,
+                                Path::new(manual.get().trim().trim_matches('"')),
+                            );
+                        }))
+                },
+            ))
     }
 
     fn directory_picker(&self, label: &'static str) -> impl IntoElement {
@@ -1405,23 +1456,29 @@ impl DirectoryControls {
             picking,
             ..
         } = self.clone();
-        action_button(label, move || {
-            if picking.get_untracked() {
-                return;
-            }
-            picking.set(true);
-            let environment = environment.clone();
-            spawn(async move {
-                match environment.choose_directory().await {
-                    Ok(Some(path)) => select(environment.as_ref(), state, &path),
-                    Ok(None) => {}
-                    Err(error) => state.update(|s| {
-                        s.message = format!("目录选择失败：{error}。可在游戏管理页手动输入路径。");
-                    }),
+        action_button_with(
+            label,
+            move || {
+                if picking.get_untracked() {
+                    return;
                 }
-                picking.set(false);
-            });
-        })
+                picking.set(true);
+                let environment = environment.clone();
+                spawn(async move {
+                    match environment.choose_directory().await {
+                        Ok(Some(path)) => select(environment.as_ref(), state, &path),
+                        Ok(None) => {}
+                        Err(error) => state.update(|s| {
+                            s.message =
+                                format!("目录选择失败：{error}。可在游戏管理页手动输入路径。");
+                        }),
+                    }
+                    picking.set(false);
+                });
+            },
+            Some(Rc::new(move || !picking.get_untracked())),
+        )
+        .0
         .bg(CONTROL)
         .text_color(INK)
         .disabled(move || picking.get())

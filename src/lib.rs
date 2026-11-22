@@ -21,6 +21,7 @@ pub mod game_install;
 mod growth;
 #[cfg(target_os = "windows")]
 mod inventory;
+mod keyboard;
 pub mod launcher;
 mod native_environment;
 pub mod plugins;

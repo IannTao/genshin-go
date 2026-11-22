@@ -991,3 +991,66 @@ windowsTest("installs, manually updates, verifies after reopen, and uninstalls a
   await afterUninstall.press("扩展");
   expect(afterUninstall.texts()).toContain("安装状态：未安装");
 }, 60000);
+
+windowsTest("clears only the chosen UID history via keyboard while preserving other UIDs and export/backup files", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450582");
+  await app.press("创建 UID 数据空间");
+  await app.press("成就管理");
+  await app.press("标记完成：风与异乡人（80001）");
+
+  await app.press("角色资料");
+  await app.type("game-uid", "123450581");
+  await app.press("创建 UID 数据空间");
+  await app.press("成就管理");
+  await app.press("标记完成：风与异乡人（80001）");
+  await app.press("导出 UIAF v1.1");
+  const exportLine = app.texts().find(line => line.startsWith("UID 123450581 的 UIAF v1.1 已导出："));
+  expect(exportLine).toBeDefined();
+  const exportPath = exportLine?.split("已导出：")[1] ?? "";
+
+  await app.press("系统设置");
+  await app.press("备份与恢复");
+  await app.press("创建整体备份");
+  const backupLine = app.texts().find(line => line.startsWith("已创建整体备份："));
+  expect(backupLine).toBeDefined();
+  const backupPath = backupLine?.slice("已创建整体备份：".length) ?? "";
+
+  await app.press("角色资料");
+  await app.press("资料管理");
+  await app.keyboard.press("tab");
+  app.onDialog(() => "取消");
+  await app.keyboard.press("enter");
+  expect(app.dialogs()[0]).toMatchObject({
+    title: "删除 UID 123450581 的历史记录？",
+    buttons: ["取消", "确认删除 UID：123450581"],
+  });
+  expect(app.texts()).not.toContain("已清除 UID 123450581 的本机历史记录");
+
+  // Focus returns to 删除历史记录 after cancel; Enter opens the dialog again to confirm.
+  app.onDialog(() => "确认删除 UID：123450581");
+  await app.keyboard.press("enter");
+  await app.waitFor("已清除 UID 123450581 的本机历史记录");
+  expect(app.texts()).toContain("当前游戏 UID：123450581");
+
+  // Target UID records are cleared, while its exported UIAF file remains readable on disk.
+  await app.press("成就管理");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await app.type("uiaf-file", exportPath);
+  await app.press("读取 UIAF 文件");
+  expect(app.texts()).toContain("已读取 1 项成就");
+  expect(app.texts()).toContain("预览导入至 UID 123450581");
+
+  // Overall backup file remains readable on disk.
+  await app.press("系统设置");
+  await app.type("restore-file", backupPath);
+  await app.press("预览恢复");
+  expect(app.texts()).toContain("UID 123450581 · 成就新增 1，更新 0，重复 0，冲突 0");
+
+  // Other UID's records remain intact.
+  await app.press("角色资料");
+  await app.press("切换至 UID：123450582");
+  await app.press("成就管理");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+}, 60000);

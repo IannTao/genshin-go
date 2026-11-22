@@ -1,5 +1,6 @@
 //! Account authorization UI; external effects use the application's environment.
-use crate::launcher::{LauncherEnvironment, button};
+use crate::keyboard::{FocusHandle, current_focus, restore_focus_with};
+use crate::launcher::{LauncherEnvironment, button, focusable_button};
 use crate::profile::{Profile, VerifiedAccount};
 use nsh_base::alert_dialog;
 use nsh_core::prelude::*;
@@ -121,6 +122,7 @@ struct AccountControls {
     generation: Signal<u64>,
     checking: Signal<bool>,
     managing: Signal<bool>,
+    focus_add_button: Signal<bool>,
 }
 
 /// Renders daily community sign-in and account authorization on the community page.
@@ -138,10 +140,12 @@ pub(crate) fn community_page(
         generation: signal(0),
         checking: signal(false),
         managing: signal(false),
+        focus_add_button: signal(false),
     };
     let scan = controls.scan;
     let entry = controls.entry;
     let managing = controls.managing;
+    let focus_add_button = controls.focus_add_button;
     let sign_in_environment = environment.clone();
     let (today, history, needs_renewal) =
         crate::community_sign_in::controls(environment.clone(), profile, move |id| {
@@ -184,10 +188,16 @@ pub(crate) fn community_page(
                     .gap_2()
                     .child(text("尚未保存米哈游账号"))
                     .child(idle.then(|| {
-                        button("扫码添加米哈游账号", move || {
-                            entry.set(AuthorizationEntry::Account);
-                            controls.start(start.clone());
-                        })
+                        let (add_button, handle) =
+                            focusable_button("扫码添加米哈游账号", move |_| {
+                                entry.set(AuthorizationEntry::Account);
+                                controls.start(start.clone());
+                            });
+                        if focus_add_button.get_untracked() {
+                            focus_add_button.set(false);
+                            crate::keyboard::restore_focus(handle);
+                        }
+                        add_button
                     }));
             };
             let id = account.account_id.clone();
@@ -273,17 +283,18 @@ impl AccountControls {
     ) -> impl IntoElement {
         let check = environment.clone();
         let id = account.account_id.clone();
+        let (remove_button, _) = focusable_button(
+            format!("移除账号：{}", account.account_id),
+            move |trigger| {
+                self.confirm_removal(environment.clone(), account.clone(), trigger);
+            },
+        );
         view()
             .gap_2()
             .child(button(format!("检查授权：{id}"), move || {
                 self.check(check.clone(), id.clone());
             }))
-            .child(button(
-                format!("移除账号：{}", account.account_id),
-                move || {
-                    self.confirm_removal(environment.clone(), account.clone());
-                },
-            ))
+            .child(remove_button)
     }
 
     fn check(self, environment: Rc<dyn LauncherEnvironment>, id: String) {
@@ -309,11 +320,20 @@ impl AccountControls {
         });
     }
 
-    fn confirm_removal(self, environment: Rc<dyn LauncherEnvironment>, account: VerifiedAccount) {
+    fn confirm_removal(
+        self,
+        environment: Rc<dyn LauncherEnvironment>,
+        account: VerifiedAccount,
+        trigger: Option<FocusHandle>,
+    ) {
+        let focus = current_focus();
         self.owner.run(|| {
             let answer = alert_dialog()
                 .title(format!("移除米哈游账号 {}？", account.account_id))
-                .description("移除后，自动签到需要重新授权。本地角色资料会保留。")
+                .description(format!(
+                    "移除后，米哈游账号 {} 的自动签到将暂停，需重新授权。各 UID 数据空间和本地角色资料会保留。",
+                    account.account_id
+                ))
                 // Windows defaults to the first button when there is no regular action.
                 .cancel("cancel", "取消")
                 .destructive("remove", format!("确认移除账号：{}", account.account_id))
@@ -323,17 +343,22 @@ impl AccountControls {
                     .await
                     .is_ok_and(|result| result.action.as_deref() == Some("remove"))
                 {
+                    restore_focus_with(focus.as_ref(), trigger);
                     return;
                 }
                 self.entry.set(AuthorizationEntry::Account);
                 match environment.remove_authorization(&account) {
                     Ok(state) => {
                         self.generation.update(|g| *g += 1);
+                        self.focus_add_button.set(true);
                         self.managing.set(false);
                         self.profile.set(state);
                         self.message.set("已移除米游社授权，已保留 UID 数据".into());
                     }
-                    Err(error) => self.message.set(format!("移除账号失败：{error}")),
+                    Err(error) => {
+                        self.message.set(format!("移除账号失败：{error}"));
+                        restore_focus_with(focus.as_ref(), trigger);
+                    }
                 }
             });
         });

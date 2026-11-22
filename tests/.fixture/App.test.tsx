@@ -433,7 +433,7 @@ test("removes the old authorization and restores only the new account with both 
   await app.press("移除账号：10001");
   expect(app.dialogs()[0]).toMatchObject({
     title: "移除米哈游账号 10001？",
-    message: "移除后，自动签到需要重新授权。本地角色资料会保留。",
+    message: "移除后，米哈游账号 10001 的自动签到将暂停，需重新授权。各 UID 数据空间和本地角色资料会保留。",
     buttons: ["取消", "确认移除账号：10001"],
   });
   expect(app.texts()).toContain("米哈游账号：10001");
@@ -484,7 +484,7 @@ test("confirms history deletion for the current UID and preserves spaces and aut
   await app.press("删除历史记录");
   expect(app.dialogs()[0]).toMatchObject({
     title: "删除 UID 987654321 的历史记录？",
-    message: "将清除该 UID 在本机数据库中保存的各类历史。UIGF、UIAF 和背包的备份及导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的历史和米游社授权会保留。",
+    message: "将清除 UID 987654321 在本机数据库中的祈愿、成就、已拥有角色、背包、养成计划与手填库存。备份与导出文件可通过文件管理器单独管理。该 UID 的数据空间、其他 UID 的记录和米游社授权会保留。",
     buttons: ["取消", "确认删除 UID：987654321"],
   });
   expect(app.texts()).not.toContain("已清除 UID 987654321 的本机历史记录");
@@ -859,6 +859,108 @@ test("browses the curated plugin catalog and reports load failures clearly", asy
   await app.press("重新加载目录");
   expect(app.texts()).toContain("条目详情：FufuLauncher.UnlockerIsland");
   expect(app.texts()).not.toContain("目录加载失败：精选插件目录清单已损坏");
+});
+
+test("shows all seven Beijing dates including unchecked days on the sign-in calendar", async () => {
+  const app = await open(".", { clock: {} });
+  await app.press("米游社");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  const initialSeven = [
+    "1970-01-02 · 已领取 · 30 米游币",
+    "1970-01-01 · 未检查",
+    "1969-12-31 · 未检查",
+    "1969-12-30 · 未检查",
+    "1969-12-29 · 未检查",
+    "1969-12-28 · 未检查",
+    "1969-12-27 · 未检查",
+  ];
+  expect(app.texts().filter(line => initialSeven.includes(line))).toEqual(initialSeven);
+
+  await app.press("模拟签到网络失败");
+  await app.press("模拟签到跨日");
+  await app.waitFor("1970-01-03 · 失败");
+  // Skip 1970-01-04 by advancing two days before the next check runs.
+  await app.press("模拟签到已完成但奖励未确认");
+  await app.press("模拟签到跨日");
+  await app.press("模拟签到跨日");
+  await app.waitFor("1970-01-05 · 已签到 · 领取待确认");
+  const afterSkip = [
+    "1970-01-05 · 已签到 · 领取待确认",
+    "1970-01-04 · 未检查",
+    "1970-01-03 · 失败",
+    "1970-01-02 · 已领取 · 30 米游币",
+    "1970-01-01 · 未检查",
+    "1969-12-31 · 未检查",
+    "1969-12-30 · 未检查",
+  ];
+  expect(app.texts().filter(line => afterSkip.includes(line))).toEqual(afterSkip);
+  expect(app.texts()).not.toContain("1969-12-29 · 未检查");
+});
+
+test("navigates removal and history dialogs in reading order and restores focus after cancel", async () => {
+  const app = await open(".", { clock: {}, width: 1040, height: 960 });
+  await app.press("米游社");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("1970-01-02 · 已领取 · 30 米游币");
+  expect(app.texts()).toContain("签到请求次数：1");
+
+  await app.press("管理授权");
+  // Tab in reading order from 管理授权 -> 检查授权：10001 -> 移除账号：10001.
+  await app.keyboard.press("tab");
+  await app.keyboard.press("tab");
+  app.onDialog(() => "取消");
+  await app.keyboard.press("enter");
+  expect(app.dialogs()).toHaveLength(1);
+  expect(app.dialogs()[0]).toMatchObject({
+    title: "移除米哈游账号 10001？",
+    buttons: ["取消", "确认移除账号：10001"],
+  });
+  expect(app.texts()).toContain("米哈游账号：10001");
+
+  // Focus returns to 移除账号：10001, so Enter opens the same confirmation again.
+  app.onDialog(() => "确认移除账号：10001");
+  await app.keyboard.press("enter");
+  await app.waitFor("尚未保存米哈游账号");
+  expect(app.dialogs()).toHaveLength(2);
+
+  // Automatic sign-in remains paused after removal even across new days and resume.
+  await app.press("模拟签到跨日");
+  await app.press("模拟休眠恢复");
+  await app.wait(3000);
+  expect(app.texts()).toContain("签到请求次数：1");
+
+  // Role profile reading order: game-uid -> 创建 UID 数据空间 -> 资料管理 -> 删除历史记录.
+  await app.press("角色资料");
+  expect(app.texts()).toContain("当前游戏 UID：123456789");
+  await app.type("game-uid", "987654321");
+  await app.keyboard.press("tab");
+  await app.keyboard.press("enter");
+  await app.waitFor("当前游戏 UID：987654321");
+  await app.keyboard.press("tab");
+  await app.keyboard.press("enter");
+  await app.waitFor("删除历史记录");
+  await app.keyboard.press("tab");
+  app.onDialog(() => "取消");
+  await app.keyboard.press("enter");
+  expect(app.dialogs()).toHaveLength(3);
+  expect(app.dialogs()[2]).toMatchObject({
+    title: "删除 UID 987654321 的历史记录？",
+    buttons: ["取消", "确认删除 UID：987654321"],
+  });
+  expect(app.texts()).not.toContain("已清除 UID 987654321 的本机历史记录");
+
+  // Focus returns to 删除历史记录, so Enter opens the same confirmation again.
+  app.onDialog(() => "确认删除 UID：987654321");
+  await app.keyboard.press("enter");
+  await app.waitFor("已清除 UID 987654321 的本机历史记录");
+  expect(app.dialogs()).toHaveLength(4);
+  // After confirmed deletion collapses 资料管理, focus returns to 资料管理 so Enter reopens it.
+  expect(app.texts()).not.toContain("删除历史记录");
+  await app.keyboard.press("enter");
+  await app.waitFor("删除历史记录");
 });
 
 test("keeps ordinary launch, full path confirmation, and data pages usable in a narrow window", async () => {
