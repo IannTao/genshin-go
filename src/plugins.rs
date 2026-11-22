@@ -345,9 +345,9 @@ fn entry_details(
         .child(text(move || action_message.get()))
 }
 
-fn format_installed_version(record: &store::InstalledPlugin) -> String {
+fn format_install_record(record: &store::InstalledPlugin) -> String {
     format!(
-        "当前版本：{}（内容校验：{}）",
+        "安装时目录版本：{}（安装时内容摘要：{}）",
         record.version,
         record.short_hash()
     )
@@ -357,24 +357,21 @@ fn status_summary(inspect_result: Option<&Result<InstallStatus, String>>) -> (St
     match inspect_result {
         None => (
             "安装状态：当前环境不可管理本机插件目录".into(),
-            "当前版本：未安装".into(),
+            "安装时目录版本：未安装".into(),
         ),
         Some(Err(error)) => (
             format!("安装状态：校验失败（{error}）"),
-            "当前版本：未知".into(),
+            "安装时目录版本：未知".into(),
         ),
         Some(Ok(InstallStatus::NotInstalled)) => {
-            ("安装状态：未安装".into(), "当前版本：未安装".into())
+            ("安装状态：未安装".into(), "安装时目录版本：未安装".into())
         }
         Some(Ok(InstallStatus::Installed(record))) => {
-            ("安装状态：已安装".into(), format_installed_version(record))
+            ("安装状态：已安装".into(), format_install_record(record))
         }
-        Some(Ok(InstallStatus::Corrupted {
-            record,
-            missing_files,
-        })) => (
-            format!("安装状态：文件不完整（缺少 {}）", missing_files.join("、")),
-            format_installed_version(record),
+        Some(Ok(InstallStatus::Corrupted { record, reason })) => (
+            format!("安装状态：损坏（{reason}）"),
+            format_install_record(record),
         ),
     }
 }
@@ -496,7 +493,7 @@ fn update_button(
         ) {
             Ok(UpdateOutcome::UpToDate(record)) => {
                 action_message.set(format!(
-                    "已是最新版本，无需更新（内容校验：{}）",
+                    "与所选来源的内容相同，无需更新（内容摘要：{}）",
                     record.short_hash()
                 ));
             }

@@ -809,7 +809,7 @@ windowsTest("installs, manually updates, verifies after reopen, and uninstalls a
   const app = await open(".", { width: 1024, height: 960 });
   await app.press("扩展");
   expect(app.texts()).toContain("安装状态：未安装");
-  expect(app.texts()).toContain("当前版本：未安装");
+  expect(app.texts()).toContain("安装时目录版本：未安装");
 
   await app.clear("plugin-source-dir");
   await app.type("plugin-source-dir", brokenDir);
@@ -821,7 +821,7 @@ windowsTest("installs, manually updates, verifies after reopen, and uninstalls a
   await app.type("plugin-source-dir", sourceV1);
   await app.press("安装插件");
   expect(app.texts()).toContain("安装状态：已安装");
-  const v1Version = app.texts().find(line => line.startsWith("当前版本：1830f9d7"));
+  const v1Version = app.texts().find(line => line.startsWith("安装时目录版本：1830f9d7"));
   expect(v1Version).toBeTruthy();
 
   const reopened = await open(".", { width: 1024, height: 960 });
@@ -832,13 +832,13 @@ windowsTest("installs, manually updates, verifies after reopen, and uninstalls a
   await reopened.clear("plugin-source-dir");
   await reopened.type("plugin-source-dir", sourceV1);
   await reopened.press("检查并更新");
-  expect(reopened.texts().some(line => line.startsWith("已是最新版本，无需更新"))).toBe(true);
+  expect(reopened.texts().some(line => line.startsWith("与所选来源的内容相同，无需更新"))).toBe(true);
 
   await reopened.clear("plugin-source-dir");
   await reopened.type("plugin-source-dir", sourceV2);
   await reopened.press("检查并更新");
   expect(reopened.texts().some(line => line.startsWith("已更新 FufuLauncher.UnlockerIsland"))).toBe(true);
-  const v2Version = reopened.texts().find(line => line.startsWith("当前版本：1830f9d7"));
+  const v2Version = reopened.texts().find(line => line.startsWith("安装时目录版本：1830f9d7"));
   expect(v2Version).toBeTruthy();
   expect(v2Version).not.toBe(v1Version);
 

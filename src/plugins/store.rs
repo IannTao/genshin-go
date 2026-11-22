@@ -25,12 +25,13 @@ impl InstalledPlugin {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Describes whether the managed installation matches its saved manifest.
 pub(super) enum InstallStatus {
     NotInstalled,
     Installed(InstalledPlugin),
     Corrupted {
         record: InstalledPlugin,
-        missing_files: Vec<String>,
+        reason: String,
     },
 }
 
@@ -60,22 +61,44 @@ pub(super) fn inspect(
             record.plugin_id
         ));
     }
+    if record.files.len() != required_files.len()
+        || required_files
+            .iter()
+            .any(|file| !record.files.contains(file))
+    {
+        return Ok(InstallStatus::Corrupted {
+            record,
+            reason: "受管文件清单与目录要求不一致".into(),
+        });
+    }
 
     let mut missing = Vec::new();
-    for file in required_files {
+    for file in &record.files {
         validate_file_name(file)?;
         if !target_dir.join(file).is_file() {
             missing.push(file.clone());
         }
     }
-    if missing.is_empty() {
-        Ok(InstallStatus::Installed(record))
-    } else {
-        Ok(InstallStatus::Corrupted {
+    if !missing.is_empty() {
+        return Ok(InstallStatus::Corrupted {
             record,
-            missing_files: missing,
-        })
+            reason: format!("缺少 {}", missing.join("、")),
+        });
     }
+
+    let mut manifest_input = Vec::new();
+    for file in &record.files {
+        let bytes = fs::read(target_dir.join(file))
+            .map_err(|error| format!("读取受管文件 {file} 失败：{error}"))?;
+        append_file_digest(&mut manifest_input, file, &bytes);
+    }
+    if sha256_hex(&manifest_input) != record.content_sha256 {
+        return Ok(InstallStatus::Corrupted {
+            record,
+            reason: "受管文件内容与安装时的摘要不一致".into(),
+        });
+    }
+    Ok(InstallStatus::Installed(record))
 }
 
 pub(super) fn install(
@@ -109,11 +132,8 @@ pub(super) fn update(
     let current = match inspect(plugins_root, install_subpath, plugin_id, required_files)? {
         InstallStatus::Installed(record) => record,
         InstallStatus::NotInstalled => return Err("插件尚未安装，请先执行安装".into()),
-        InstallStatus::Corrupted { missing_files, .. } => {
-            return Err(format!(
-                "当前安装不完整（缺少 {}），请先重新安装",
-                missing_files.join("、")
-            ));
+        InstallStatus::Corrupted { reason, .. } => {
+            return Err(format!("当前安装损坏（{reason}），请先重新安装"));
         }
     };
 
@@ -234,11 +254,7 @@ fn stage_from_source(
         }
         let bytes =
             fs::read(&source_path).map_err(|error| format!("读取来源文件 {file} 失败：{error}"))?;
-        let file_hash = sha256_hex(&bytes);
-        manifest_input.extend_from_slice(file.as_bytes());
-        manifest_input.push(b':');
-        manifest_input.extend_from_slice(file_hash.as_bytes());
-        manifest_input.push(b'\n');
+        append_file_digest(&mut manifest_input, file, &bytes);
         files.push((file.clone(), bytes));
     }
 
@@ -246,6 +262,13 @@ fn stage_from_source(
         files,
         content_sha256: sha256_hex(&manifest_input),
     })
+}
+
+fn append_file_digest(manifest_input: &mut Vec<u8>, file: &str, bytes: &[u8]) {
+    manifest_input.extend_from_slice(file.as_bytes());
+    manifest_input.push(b':');
+    manifest_input.extend_from_slice(sha256_hex(bytes).as_bytes());
+    manifest_input.push(b'\n');
 }
 
 fn commit_staged(
@@ -668,9 +691,46 @@ mod tests {
         .map_err(|e| e.to_string())?;
         assert!(matches!(
             inspect(&plugins_root, "fufu-unlocker-island", "fufu", &files)?,
-            InstallStatus::Corrupted { missing_files, .. }
-                if missing_files == vec!["FufuLauncher.UnlockerIsland.dll".to_owned()]
+            InstallStatus::Corrupted { reason, .. }
+                if reason == "缺少 FufuLauncher.UnlockerIsland.dll"
         ));
+
+        let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_managed_file_is_detected_and_can_be_reinstalled() -> Result<(), String> {
+        let root = temp_workspace("replaced")?;
+        let source = root.join("source");
+        let plugins_root = root.join("plugins");
+        let files = required();
+        let subpath = "fufu-unlocker-island";
+        let plugin_id = "fufu";
+        let version = "1830f9d7";
+        fs::create_dir_all(&source).map_err(|error| error.to_string())?;
+        fs::write(source.join(&files[0]), b"original module").map_err(|error| error.to_string())?;
+        fs::write(source.join(&files[1]), b"original config").map_err(|error| error.to_string())?;
+        let installed = install(&plugins_root, subpath, plugin_id, version, &source, &files)?;
+
+        fs::write(
+            plugins_root.join(subpath).join(&files[0]),
+            b"replaced module",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(matches!(
+            inspect(&plugins_root, subpath, plugin_id, &files)?,
+            InstallStatus::Corrupted { .. }
+        ));
+        assert!(update(&plugins_root, subpath, plugin_id, version, &source, &files).is_err());
+        assert_eq!(
+            install(&plugins_root, subpath, plugin_id, version, &source, &files)?,
+            installed
+        );
+        assert_eq!(
+            inspect(&plugins_root, subpath, plugin_id, &files)?,
+            InstallStatus::Installed(installed)
+        );
 
         let _ = fs::remove_dir_all(&root);
         Ok(())
