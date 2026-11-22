@@ -1,4 +1,5 @@
 //! Local character and weapon growth plans and their material requirements.
+pub(crate) mod backup;
 mod store;
 mod ui;
 mod weapon;
@@ -84,6 +85,13 @@ enum Kind {
 }
 
 impl Kind {
+    fn subject(self) -> &'static str {
+        match self {
+            Self::Character => "角色",
+            Self::Weapon => "武器",
+        }
+    }
+
     fn experience_materials(self) -> &'static [ExperienceMaterial] {
         match self {
             Self::Character => &EXP_BOOKS,

@@ -47,7 +47,7 @@ pub(crate) fn spaces(
 ) -> impl IntoElement {
     let message = signal(String::new());
     let managing = signal(false);
-    let deletion_revision = signal(0_u64);
+    let growth_revision = signal(0_u64);
     let switch = environment.clone();
     #[cfg(target_os = "windows")]
     let local_records = environment.uid_database_path().map(|path| {
@@ -61,13 +61,14 @@ pub(crate) fn spaces(
             .child(crate::growth::section(
                 path.clone(),
                 profile,
-                deletion_revision,
+                growth_revision,
                 history_revision,
             ))
             .child(crate::backup::section(
                 path.clone(),
                 profile,
                 history_revision,
+                growth_revision,
             ))
             .child(crate::wishes::section(path, profile, history_revision))
     });
@@ -127,7 +128,7 @@ pub(crate) fn spaces(
             managing,
             message,
             history_revision,
-            deletion_revision,
+            growth_revision,
         ))
         .child(text(move || message.get()))
         .child(roster)
@@ -184,7 +185,7 @@ fn history_controls(
     managing: Signal<bool>,
     message: Signal<String>,
     revision: Signal<u64>,
-    deletion_revision: Signal<u64>,
+    growth_revision: Signal<u64>,
 ) -> impl IntoElement {
     let owner = Owner::current();
     dynamic(move || {
@@ -208,7 +209,7 @@ fn history_controls(
                                 managing,
                                 message,
                                 revision,
-                                deletion_revision,
+                                growth_revision,
                             );
                         });
                     })
@@ -224,7 +225,7 @@ fn confirm_history_deletion(
     managing: Signal<bool>,
     message: Signal<String>,
     revision: Signal<u64>,
-    deletion_revision: Signal<u64>,
+    growth_revision: Signal<u64>,
 ) {
     let answer = alert_dialog()
         .title(format!("删除 UID {uid} 的历史记录？"))
@@ -246,7 +247,7 @@ fn confirm_history_deletion(
             Ok(state) => {
                 profile.set(state);
                 revision.update(|revision| *revision += 1);
-                deletion_revision.update(|revision| *revision += 1);
+                growth_revision.update(|revision| *revision += 1);
                 managing.set(false);
                 message.set(format!("已清除 UID {uid} 的本机历史记录"));
             }

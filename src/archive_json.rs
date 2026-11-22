@@ -4,12 +4,14 @@ use nsh_core::element::pick_paths;
 use nsh_core::file_dialog::{FileFilter, OpenDialog};
 use nsh_core::prelude::*;
 use serde::de::{MapAccess, Visitor, value::MapAccessDeserializer};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::{fmt, marker::PhantomData};
 
 /// Deserializes an object without accepting Serde's positional struct syntax.
+#[derive(Serialize)]
+#[serde(transparent)]
 pub(crate) struct Object<T>(pub(crate) T);
 
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
@@ -30,6 +32,16 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Object<T> {
 
         decoder.deserialize_map(ObjectVisitor(PhantomData))
     }
+}
+
+/// Decodes an array whose entries must be JSON objects.
+pub(crate) fn object_list<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    decoder: D,
+) -> Result<Vec<T>, D::Error> {
+    Ok(Vec::<Object<T>>::deserialize(decoder)?
+        .into_iter()
+        .map(|Object(value)| value)
+        .collect())
 }
 
 /// Opens a JSON file picker and reports the selected path or a picker error.

@@ -61,13 +61,6 @@ pub(super) fn section(
 }
 
 impl Kind {
-    fn subject(self) -> &'static str {
-        match self {
-            Self::Character => "角色",
-            Self::Weapon => "武器",
-        }
-    }
-
     fn field_prefix(self) -> &'static str {
         match self {
             Self::Character => "growth",

@@ -1,4 +1,7 @@
-use crate::{archive_json::Object, profile::validate_uid};
+use crate::{
+    archive_json::{Object, object_list},
+    profile::validate_uid,
+};
 use chrono::{DateTime, NaiveDateTime, SecondsFormat};
 use serde::de::{MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
@@ -81,11 +84,21 @@ pub(super) struct Archive {
 }
 
 /// Preserves equipment instances and the quantities of a single snapshot.
-#[derive(PartialEq)]
+#[derive(Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Inventory {
+    #[serde(deserialize_with = "object_list")]
     pub weapons: Vec<Weapon>,
+    #[serde(deserialize_with = "object_list")]
     pub artifacts: Vec<Artifact>,
+    #[serde(deserialize_with = "material_map")]
     pub materials: BTreeMap<String, u32>,
+}
+
+fn material_map<'de, D: serde::Deserializer<'de>>(
+    decoder: D,
+) -> Result<BTreeMap<String, u32>, D::Error> {
+    MaterialCounts::deserialize(decoder).map(|counts| counts.0)
 }
 
 /// Describes a weapon instance in a GOOD file.
@@ -110,7 +123,7 @@ pub(super) struct Artifact {
     rarity: u8,
     main_stat_key: String,
     level: u8,
-    #[serde(deserialize_with = "substats")]
+    #[serde(deserialize_with = "object_list")]
     substats: Vec<Substat>,
     location: Option<String>,
     lock: Option<bool>,
@@ -124,13 +137,6 @@ struct Substat {
     value: f64,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
-}
-
-fn substats<'de, D: serde::Deserializer<'de>>(decoder: D) -> Result<Vec<Substat>, D::Error> {
-    Ok(Vec::<Object<Substat>>::deserialize(decoder)?
-        .into_iter()
-        .map(|Object(value)| value)
-        .collect())
 }
 
 /// Keeps the supplied time and its timezone-independent sort value.
@@ -167,8 +173,7 @@ impl Archive {
         let Object(good): Object<Good> =
             serde_json::from_slice(bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes))
                 .map_err(|error| format!("GOOD 文件格式无效：{error}"))?;
-        if good.format != "GOOD" || !matches!(good.version, 1..=3) || good.source.trim().is_empty()
-        {
+        if good.format != "GOOD" || !valid_good_source(good.version, &good.source) {
             return Err("请选择包含来源信息的 GOOD v1、v2 或 v3 文件".into());
         }
         if good.gi_off.iter().any(|category| {
@@ -240,6 +245,11 @@ impl Archive {
     }
 }
 
+/// Checks the GOOD versions and source metadata accepted by the inventory importer.
+pub(super) fn valid_good_source(version: u8, source: &str) -> bool {
+    matches!(version, 1..=3) && !source.trim().is_empty()
+}
+
 impl Good {
     fn identity(&self) -> Result<(Option<String>, Option<String>), String> {
         let (metadata_uid, metadata_time) = self
@@ -282,7 +292,8 @@ impl Good {
 }
 
 impl Inventory {
-    fn validate(&self) -> Result<(), String> {
+    /// Checks whether each equipment entry and material key represents valid inventory.
+    pub(super) fn validate(&self) -> Result<(), String> {
         for (index, weapon) in self.weapons.iter().enumerate() {
             if weapon.key.trim().is_empty()
                 || !(1..=100).contains(&weapon.level)

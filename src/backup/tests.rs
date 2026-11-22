@@ -61,8 +61,38 @@ fn migrates_all_uid_spaces_and_records_between_databases_without_authorization()
     let archive = test.0.join(EXPECTED_FILE);
     let wishes = [wish("1000000000000000001", "10000002")];
     let achievements = [progress(3, 30, 1_760_000_000)];
-    write_seed(&archive, &wishes, &achievements)?;
-    restore(&original, &preview(&original, &archive)?)?;
+    let growth = json!({
+        "characters": {"10000021": {
+            "current": {"level": 1, "phase": 0, "talents": [1, 1, 1]},
+            "target": {"level": 2, "phase": 0, "talents": [1, 1, 1]}
+        }},
+        "weapons": {"13301": {
+            "current": {"level": 1, "phase": 0}, "target": {"level": 3, "phase": 0}
+        }},
+        "stock": {"104001": 1}
+    });
+    let inventory = json!([{
+        "captured_at": "2026-10-10T07:50:00+08:00",
+        "source": "Inventory_Kamera",
+        "good_version": 2,
+        "inventory": {
+            "weapons": [{"key":"HuntersBow","level":1,"ascension":0,"refinement":1,"location":"","lock":false,"id":0}],
+            "artifacts": [],
+            "materials": {"SlimeCondensate": 3}
+        }
+    }]);
+    let empty_growth = json!({"characters": {}, "weapons": {}, "stock": {}});
+    let expected = json!({
+        "format": "genshin-go-backup", "version": 2,
+        "uids": [
+            {"uid": UID, "wishes": wishes, "achievements": achievements, "growth": growth, "inventory": inventory},
+            {"uid": EMPTY_UID, "wishes": [], "achievements": [], "growth": empty_growth, "inventory": []}
+        ]
+    });
+    let mut seed = expected.clone();
+    seed["uids"] = json!([seed["uids"][0]]);
+    fs::write(&archive, serde_json::to_vec(&seed)?)?;
+    restore(&original, &preview(&original, &archive)?, &Choices::new())?;
     select_uid(&original, EMPTY_UID, true)?;
     let original_profile = save(
         &original,
@@ -77,24 +107,26 @@ fn migrates_all_uid_spaces_and_records_between_databases_without_authorization()
     assert!(original_profile.account.is_some());
 
     let archive = export(&original)?;
-    let expected = json!({
-        "format": "genshin-go-backup", "version": 1,
-        "uids": [
-            {"uid": UID, "wishes": wishes, "achievements": achievements},
-            {"uid": EMPTY_UID, "wishes": [], "achievements": []}
-        ]
-    });
     assert_eq!(contents(&archive)?, expected);
     let pending = preview(&migrated, &archive)?;
     assert!(load(&migrated)? == Profile::default());
-    let (before, _) = restore(&migrated, &pending)?;
+    let (before, _) = restore(&migrated, &pending, &Choices::new())?;
     assert_eq!(contents(&before)?["uids"], json!([]));
     let profile = load(&migrated)?;
     assert_eq!(profile.uids, [UID, EMPTY_UID]);
     assert_eq!(profile.active_uid.as_deref(), Some(UID));
     assert!(profile.account.is_none());
     assert_eq!(contents(&export(&migrated)?)?, expected);
-    assert!(!preview(&migrated, &archive)?.has_changes());
+    assert!(!preview(&migrated, &archive)?.has_changes(&Choices::new()));
+
+    let legacy = test.0.join("version-1.json");
+    write_seed(&legacy, &[], &[progress(3, 40, 1_760_000_000)])?;
+    let (before_legacy, _) = restore(&migrated, &preview(&migrated, &legacy)?, &Choices::new())?;
+    assert_eq!(contents(&before_legacy)?, expected);
+    let after_legacy = contents(&export(&migrated)?)?;
+    assert_eq!(after_legacy["uids"][0]["achievements"][0]["current"], 40);
+    assert_eq!(after_legacy["uids"][0]["growth"], growth);
+    assert_eq!(after_legacy["uids"][0]["inventory"], inventory);
     Ok(())
 }
 
@@ -111,7 +143,7 @@ fn merges_records_only_after_a_current_preview_and_successful_backup()
         std::slice::from_ref(&saved_wish),
         std::slice::from_ref(&saved_progress),
     )?;
-    restore(&target, &preview(&target, &archive)?)?;
+    restore(&target, &preview(&target, &archive)?, &Choices::new())?;
 
     let additions = wish("11", "11401");
     write_seed(
@@ -121,7 +153,7 @@ fn merges_records_only_after_a_current_preview_and_successful_backup()
     )?;
     let stale = preview(&target, &archive)?;
     assert_eq!(
-        stale.entries[0].summaries(),
+        stale.entries[0].summaries().take(2).collect::<Vec<_>>(),
         [
             format!("UID {UID} · 祈愿新增 1，重复 0，冲突 1"),
             format!("UID {UID} · 成就新增 0，更新 1，重复 0，冲突 1"),
@@ -129,9 +161,13 @@ fn merges_records_only_after_a_current_preview_and_successful_backup()
     );
     let another_archive = test.0.join("another.json");
     write_seed(&another_archive, &[], &[progress(2, 40, 1_760_000_050)])?;
-    restore(&target, &preview(&target, &another_archive)?)?;
+    restore(
+        &target,
+        &preview(&target, &another_archive)?,
+        &Choices::new(),
+    )?;
     assert_eq!(
-        restore(&target, &stale).err().as_deref(),
+        restore(&target, &stale, &Choices::new()).err().as_deref(),
         Some("本机 UID 记录已变更，请重新预览")
     );
 
@@ -141,14 +177,14 @@ fn merges_records_only_after_a_current_preview_and_successful_backup()
     fs::rename(&blocked, &backup_dir)?;
     fs::write(&blocked, [])?;
     assert!(
-        restore(&target, &pending)
+        restore(&target, &pending, &Choices::new())
             .err()
             .is_some_and(|error| error.starts_with("恢复前备份失败："))
     );
     fs::remove_file(&blocked)?;
     fs::rename(backup_dir, blocked)?;
 
-    let (before, _) = restore(&target, &pending)?;
+    let (before, _) = restore(&target, &pending, &Choices::new())?;
     assert_eq!(contents(&before)?["uids"][0]["wishes"], json!([saved_wish]));
     assert_eq!(
         contents(&before)?["uids"][0]["achievements"],
@@ -175,12 +211,12 @@ fn rejects_malformed_or_unsupported_backup_files() -> Result<(), Box<dyn std::er
     );
 
     let mut unsupported = contents(&archive)?;
-    unsupported["version"] = json!(2);
+    unsupported["version"] = json!(3);
     unsupported["uids"][0]["achievements"] = json!([]);
     fs::write(&archive, serde_json::to_vec(&unsupported)?)?;
     assert_eq!(
         Backup::read(&archive).err().as_deref(),
-        Some("不支持整体备份版本 2")
+        Some("不支持整体备份版本 3")
     );
 
     let standard = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/uiaf-v1.1.json");

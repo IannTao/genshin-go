@@ -51,17 +51,25 @@ value.
 
 Open **角色资料 → 备份与恢复** and choose **创建整体备份**. Copy the displayed JSON file
 from `uid-backups` in the launcher data directory to the new computer. The file
-contains all UID data spaces, wish records and achievement progress. On the new
-computer, scan again in **米游社** to authorize community features.
+contains all UID data spaces, wish records, achievement progress, character and
+weapon growth plans, manual material quantities, and complete inventory snapshot
+history. Scan again in **米游社** on the new computer to authorize community features.
 
 Select the JSON file or enter its path, then choose **预览恢复**. The preview
 shows new UID data spaces and counts of new, duplicate and conflicting records
 for each UID. **备份并确认恢复** saves the destination's current data to a new
-file in `uid-backups` before merging. Wishes are deduplicated by record ID and
-conflicting wishes keep the local copy. Achievement progress merges by status,
-progress and completion time using the same rules as UIAF import. Restore keeps
-the selected UID if there is one. Use the UIGF and UIAF controls for standard
-exchange files.
+file in `uid-backups` before merging. Choose the local or backup version for each
+conflicting plan or manual material quantity before confirming. Wishes are deduplicated
+by record ID and conflicting wishes keep the local copy. Achievement progress merges
+by status, progress and completion time using the same rules as UIAF import.
+Inventory quantities stay with their original snapshots and collection times.
+**背包仓库** opens the newest complete snapshot by default. Select an older snapshot
+in **背包快照历史** to view it. If two snapshots with the same collection time differ,
+the restore preview reports the conflict and keeps the local snapshot.
+
+The launcher can restore version 1 and version 2 backups. Restoring a version 1
+file preserves existing plans and inventory history. Restore keeps the selected
+UID if there is one. Use the UIGF and UIAF controls for standard exchange files.
 
 ## Windows inventory snapshots
 

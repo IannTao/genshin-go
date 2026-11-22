@@ -1,5 +1,6 @@
 //! Locally imported, read-only inventory snapshots scoped to game UIDs.
 mod archive;
+pub(crate) mod backup;
 mod store;
 mod ui;
 

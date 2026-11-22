@@ -40,7 +40,8 @@ pub(super) struct Header {
     pub captured_at: String,
     pub source: String,
     pub version: u8,
-    captured_nanos: i64,
+    /// Contains the time used to sort complete snapshots across time zones.
+    pub(super) captured_nanos: i64,
 }
 
 /// Describes the visible effect of confirming a reviewed import.
@@ -68,7 +69,8 @@ pub(super) fn list(path: &Path, uid: &str) -> Result<Vec<Header>, String> {
     headers(&open(path)?, uid)
 }
 
-fn headers(db: &Connection, uid: &str) -> Result<Vec<Header>, String> {
+/// Lists snapshot headers from the caller's database snapshot.
+pub(super) fn headers(db: &Connection, uid: &str) -> Result<Vec<Header>, String> {
     let mut query = db
         .prepare(
             "SELECT id, captured_at, source, good_version, captured_nanos
@@ -119,7 +121,8 @@ pub(super) fn latest_materials(path: &Path, uid: &str) -> Result<Option<Material
         .transpose()
 }
 
-fn inventory(db: &Connection, uid: &str, id: i64) -> Result<Inventory, String> {
+/// Reads one complete inventory from the caller's database snapshot.
+pub(super) fn inventory(db: &Connection, uid: &str, id: i64) -> Result<Inventory, String> {
     let (weapons, artifacts) = db
         .query_row(
             "SELECT weapons_json, artifacts_json FROM inventory_snapshots WHERE uid = ?1 AND id = ?2",
@@ -232,26 +235,44 @@ pub(super) fn import(
     )?;
     let backup =
         backup(path, &write, &actual).map_err(|error| format!("导入前备份失败：{error}"))?;
-    let encode_error = |error| format!("无法编码背包记录：{error}");
-    write
-        .execute(
-            "INSERT INTO inventory_snapshots
-             (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                actual.uid,
-                captured_at.original,
-                captured_at.nanos,
-                archive.source,
-                archive.version,
-                serde_json::to_string(&archive.inventory.weapons).map_err(encode_error)?,
-                serde_json::to_string(&archive.inventory.artifacts).map_err(encode_error)?,
-            ],
-        )
-        .map_err(|error| database_error(&error))?;
-    save_materials(&write, write.last_insert_rowid(), &archive.inventory)?;
+    insert(
+        &write,
+        &actual.uid,
+        captured_at,
+        archive.version,
+        &archive.source,
+        &archive.inventory,
+    )?;
     write.commit().map_err(|error| database_error(&error))?;
     Ok(backup)
+}
+
+/// Saves all three categories as one immutable snapshot in the caller's transaction.
+pub(super) fn insert(
+    db: &Connection,
+    uid: &str,
+    captured_at: &CaptureTime,
+    version: u8,
+    source: &str,
+    inventory: &Inventory,
+) -> Result<(), String> {
+    let encode_error = |error| format!("无法编码背包记录：{error}");
+    db.execute(
+        "INSERT INTO inventory_snapshots
+             (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            uid,
+            captured_at.original,
+            captured_at.nanos,
+            source,
+            version,
+            serde_json::to_string(&inventory.weapons).map_err(encode_error)?,
+            serde_json::to_string(&inventory.artifacts).map_err(encode_error)?,
+        ],
+    )
+    .map_err(|error| database_error(&error))?;
+    save_materials(db, db.last_insert_rowid(), inventory)
 }
 
 fn save_materials(db: &Connection, id: i64, inventory: &Inventory) -> Result<(), String> {

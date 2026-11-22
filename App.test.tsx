@@ -436,7 +436,7 @@ windowsTest("uses the incomplete-category confirmation and preserves the UID and
   expect(app.texts()).not.toContain("预览背包导入至 UID 123450123");
 }, 60000);
 
-windowsTest("creates an overall backup and previews restoring cleared wishes and achievement progress", async () => {
+windowsTest("restores all portable UID data from an overall backup", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");
   await app.type("game-uid", "123450020");
@@ -450,6 +450,29 @@ windowsTest("creates an overall backup and previews restoring cleared wishes and
   await app.press("标记完成：风与异乡人（80001）");
 
   await app.press("角色资料");
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "2");
+  await app.type("growth-stock-104001", "1");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存安柏的养成计划");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "13301");
+  await app.press("规划白缨枪");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "3");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存白缨枪的养成计划");
+
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await app.press("读取 GOOD 文件");
+  await app.type("inventory-captured-at", "+08:00");
+  await app.press("预览背包导入至 UID 123450020");
+  await app.press("备份并确认完整导入");
+
   await app.press("备份与恢复");
   await app.press("创建整体备份");
   const backup = app.texts().find((line) => line.startsWith("已创建整体备份："));
@@ -461,23 +484,103 @@ windowsTest("creates an overall backup and previews restoring cleared wishes and
   await app.press("删除历史记录");
   await app.waitFor("已清除 UID 123450020 的本机历史记录");
 
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-newer.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450020");
+  await app.press("备份并确认完整导入");
+
   await app.type("restore-file", path);
   await app.press("预览恢复");
   expect(app.texts()).toContain("UID 123450020 · 祈愿新增 1，重复 0，冲突 0");
   expect(app.texts()).toContain("UID 123450020 · 成就新增 1，更新 0，重复 0，冲突 0");
+  expect(app.texts()).toContain("UID 123450020 · 角色计划新增 1，重复 0，冲突 0");
+  expect(app.texts()).toContain("UID 123450020 · 武器计划新增 1，重复 0，冲突 0");
+  expect(app.texts()).toContain("UID 123450020 · 背包快照新增 1，重复 0，冲突 0");
+  expect(app.texts()).toContain("恢复后默认采集时间：2026-10-10T07:50:00+08:00");
   expect(app.texts()).toContain("暂无祈愿记录");
+  expect(app.texts()).toContain("暂无武器养成计划");
+  expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
   await app.press("成就");
   expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
   await app.press("角色资料");
   await app.press("备份并确认恢复");
   expect(app.texts().join("\n")).toContain("恢复完成。恢复前备份：");
   await app.waitFor(wish);
+  await app.press("查看白缨枪的计划（等级 1 → 3）");
+  await app.press("角色养成计划");
+  await app.press("查看安柏的计划（等级 1 → 2）");
+  expect(app.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
+  await app.press("材料");
+  expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
+  expect(app.texts()).toContain("SlimeCondensate · 数量 3");
+  await app.press("背包快照历史");
+  await app.press("查看旧快照：2026-10-09T08:00:00+08:00");
+  expect(app.texts()).toContain("采集时间：2026-10-09T08:00:00+08:00");
+  await app.press("材料");
+  expect(app.texts()).toContain("SlimeCondensate · 数量 81");
+  await app.press("武器");
+  expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
+  await app.press("圣遗物");
+  expect(app.texts().join("\n")).toContain("GladiatorsFinale");
   await app.press("预览恢复");
   expect(app.texts()).toContain("UID 123450020 · 祈愿新增 0，重复 1，冲突 0");
   expect(app.texts()).toContain("没有需要恢复的变更");
   expect(app.texts()).not.toContain("备份并确认恢复");
   await app.press("成就");
   expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
+}, 60000);
+
+windowsTest("requires an explicit version for each conflicting growth plan or manual quantity", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450024");
+  await app.press("创建 UID 数据空间");
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "2");
+  await app.type("growth-stock-104001", "1");
+  await app.press("保存养成计划");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "13301");
+  await app.press("规划白缨枪");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "2");
+  await app.press("保存养成计划");
+  await app.press("备份与恢复");
+  await app.press("创建整体备份");
+  const prefix = "已创建整体备份：";
+  const path = app.texts().find((line) => line.startsWith(prefix))?.slice(prefix.length) ?? "";
+  expect(path.length).toBeGreaterThan(0);
+
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "3");
+  await app.press("保存养成计划");
+  await app.press("角色养成计划");
+  await app.press("查看安柏的计划（等级 1 → 2）");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "3");
+  await app.clear("growth-stock-104001");
+  await app.type("growth-stock-104001", "0");
+  await app.press("保存养成计划");
+  await app.waitFor("查看安柏的计划（等级 1 → 3）");
+
+  await app.type("restore-file", path);
+  await app.press("预览恢复");
+  expect(app.texts()).toContain("UID 123450024 · 角色计划新增 0，重复 0，冲突 1");
+  expect(app.texts()).toContain("UID 123450024 · 武器计划新增 0，重复 0，冲突 1");
+  expect(app.texts()).not.toContain("备份并确认恢复");
+  await app.press("使用备份 · UID 123450024 · 角色计划 安柏");
+  await app.press("保留本机 · UID 123450024 · 武器计划 白缨枪");
+  expect(app.texts()).not.toContain("备份并确认恢复");
+  await app.press("使用备份 · UID 123450024 · 手填库存 流浪者的经验（材料 104001）");
+  await app.press("备份并确认恢复");
+  await app.press("查看安柏的计划（等级 1 → 2）");
+  expect(app.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
+  await app.press("武器养成计划");
+  await app.waitFor("查看白缨枪的计划（等级 1 → 3）");
 }, 60000);
 
 windowsTest("previews and creates a missing UID from an overall backup", async () => {
