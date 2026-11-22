@@ -73,13 +73,15 @@ struct Metadata {
     captured_at: Option<String>,
 }
 
-/// Holds the original GOOD source, destination metadata and complete inventory.
+/// Holds the original GOOD source, destination metadata and supplied inventory.
 pub(super) struct Archive {
     pub version: u8,
     pub source: String,
     pub uid: Option<String>,
     pub captured_at: Option<String>,
     pub inventory: Inventory,
+    /// Identifies the categories present in the file.
+    pub coverage: u8,
     pub omitted_categories: Vec<&'static str>,
 }
 
@@ -146,6 +148,13 @@ pub(super) struct CaptureTime {
 }
 
 impl CaptureTime {
+    fn from_millis(millis: i64) -> Result<Self, String> {
+        let time = DateTime::from_timestamp_millis(millis)
+            .ok_or("GOOD 文件中的采集时间无效")?
+            .to_rfc3339_opts(SecondsFormat::Millis, true);
+        Self::parse(&time)
+    }
+
     /// Parses a timestamp with an explicit UTC offset.
     pub(super) fn parse(original: &str) -> Result<Self, String> {
         let original = original.trim();
@@ -161,7 +170,7 @@ impl CaptureTime {
 }
 
 impl Archive {
-    /// Reads and validates a complete GOOD inventory without writing to SQLite.
+    /// Reads and validates the supplied GOOD inventory without writing to SQLite.
     pub(super) fn read(path: &Path) -> Result<Self, String> {
         let mut bytes = Vec::new();
         File::open(path)
@@ -192,12 +201,17 @@ impl Archive {
         .into_iter()
         .filter_map(|(omitted, name)| omitted.then_some(name))
         .collect::<Vec<_>>();
-        if omitted_categories.len() == 3
-            || (!omitted_categories.is_empty()
-                && (good.version != 2 || good.source != "Inventory_Kamera"))
-        {
-            return Err("完整背包快照须包含武器、圣遗物和材料。请检查导出范围。".into());
+        let supplied = (u8::from(good.weapons.is_some()) * super::WEAPONS)
+            | (u8::from(good.artifacts.is_some()) * super::ARTIFACTS)
+            | (u8::from(good.materials.is_some()) * super::MATERIALS);
+        if supplied == 0 {
+            return Err("GOOD 文件未包含武器、圣遗物或材料。请检查导出范围。".into());
         }
+        let omitted_categories = if good.version == 2 && good.source == "Inventory_Kamera" {
+            omitted_categories
+        } else {
+            Vec::new()
+        };
         let (uid, captured_at) = good.identity()?;
         let inventory = Inventory {
             weapons: good
@@ -223,22 +237,25 @@ impl Archive {
             uid,
             captured_at,
             inventory,
+            coverage: supplied,
             omitted_categories,
         })
     }
 
-    /// Suggests the local time embedded by Inventory Kamera in its original filename.
+    /// Suggests the local time embedded by Inventory Kamera or `GGScanner` in its original filename.
     pub(super) fn suggested_time(&self, path: &Path) -> String {
         if let Some(time) = &self.captured_at {
             return time.clone();
         }
-        if self.source != "Inventory_Kamera" {
-            return String::new();
-        }
+        let (prefix, format) = match self.source.as_str() {
+            "Inventory_Kamera" => ("genshinData_GOOD_", "%Y_%m_%d_%H_%M"),
+            "yas-GOODScanner" => ("genshin_export_", "%Y-%m-%d_%H-%M-%S"),
+            _ => return String::new(),
+        };
         path.file_stem()
             .and_then(|name| name.to_str())
-            .and_then(|name| name.strip_prefix("genshinData_GOOD_"))
-            .and_then(|time| NaiveDateTime::parse_from_str(time, "%Y_%m_%d_%H_%M").ok())
+            .and_then(|name| name.strip_prefix(prefix))
+            .and_then(|time| NaiveDateTime::parse_from_str(time, format).ok())
             .map_or_else(String::new, |time| {
                 time.format("%Y-%m-%dT%H:%M:%S").to_string()
             })
@@ -273,15 +290,7 @@ impl Good {
             validate_uid(uid).map_err(|_| "GOOD 文件中的游戏 UID 无效")?;
         }
         let metadata_time = metadata_time.map(CaptureTime::parse).transpose()?;
-        let good_time = self
-            .timestamp
-            .map(|millis| {
-                let timestamp = DateTime::from_timestamp_millis(millis)
-                    .ok_or("GOOD 文件中的采集时间无效")?
-                    .to_rfc3339_opts(SecondsFormat::Millis, true);
-                CaptureTime::parse(&timestamp)
-            })
-            .transpose()?;
+        let good_time = self.timestamp.map(CaptureTime::from_millis).transpose()?;
         if let (Some(metadata_time), Some(good_time)) = (&metadata_time, &good_time)
             && metadata_time.nanos != good_time.nanos
         {
@@ -292,6 +301,18 @@ impl Good {
 }
 
 impl Inventory {
+    /// Checks that no category absent from the snapshot carries records.
+    pub(super) fn validate_coverage(&self, coverage: u8) -> Result<(), String> {
+        if !(1..=super::ALL).contains(&coverage)
+            || (coverage & super::WEAPONS == 0 && !self.weapons.is_empty())
+            || (coverage & super::ARTIFACTS == 0 && !self.artifacts.is_empty())
+            || (coverage & super::MATERIALS == 0 && !self.materials.is_empty())
+        {
+            return Err("背包快照的类别标记与内容不一致".into());
+        }
+        self.validate()
+    }
+
     /// Checks whether each equipment entry and material key represents valid inventory.
     pub(super) fn validate(&self) -> Result<(), String> {
         for (index, weapon) in self.weapons.iter().enumerate() {
@@ -329,6 +350,7 @@ impl Inventory {
         source: &str,
         uid: &str,
         captured_at: &str,
+        coverage: u8,
     ) -> Result<Vec<u8>, String> {
         #[derive(Serialize)]
         struct Export<'a> {
@@ -336,9 +358,12 @@ impl Inventory {
             version: u8,
             source: &'a str,
             metadata: Metadata,
-            weapons: &'a [Weapon],
-            artifacts: &'a [Artifact],
-            materials: &'a BTreeMap<String, u32>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            weapons: Option<&'a [Weapon]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            artifacts: Option<&'a [Artifact]>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            materials: Option<&'a BTreeMap<String, u32>>,
         }
         let bytes = serde_json::to_vec(&Export {
             format: "GOOD",
@@ -348,9 +373,9 @@ impl Inventory {
                 uid: Some(uid.to_owned()),
                 captured_at: Some(captured_at.to_owned()),
             },
-            weapons: &self.weapons,
-            artifacts: &self.artifacts,
-            materials: &self.materials,
+            weapons: (coverage & super::WEAPONS != 0).then_some(&self.weapons),
+            artifacts: (coverage & super::ARTIFACTS != 0).then_some(&self.artifacts),
+            materials: (coverage & super::MATERIALS != 0).then_some(&self.materials),
         })
         .map_err(|error| format!("无法编码背包备份：{error}"))?;
         if bytes.len() as u64 > MAX_BYTES {

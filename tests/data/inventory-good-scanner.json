@@ -1,0 +1,8 @@
+{
+  "format": "GOOD",
+  "version": 3,
+  "source": "yas-GOODScanner",
+  "metadata": {"uid":"123450125","capturedAt":"2026-11-01T08:00:00+08:00"},
+  "weapons": [{"key":"DullBlade","level":20,"ascension":1,"refinement":1,"location":"","lock":false}],
+  "artifacts": []
+}

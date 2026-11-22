@@ -52,7 +52,7 @@ value.
 Open **角色资料 → 备份与恢复** and choose **创建整体备份**. Copy the displayed JSON file
 from `uid-backups` in the launcher data directory to the new computer. The file
 contains all UID data spaces, wish records, achievement progress, character and
-weapon growth plans, manual material quantities, and complete inventory snapshot
+weapon growth plans, manual material quantities, and inventory snapshot
 history. Scan again in **米游社** on the new computer to authorize community features.
 
 Select the JSON file or enter its path, then choose **预览恢复**. The preview
@@ -63,7 +63,7 @@ conflicting plan or manual material quantity before confirming. Wishes are dedup
 by record ID and conflicting wishes keep the local copy. Achievement progress merges
 by status, progress and completion time using the same rules as UIAF import.
 Inventory quantities stay with their original snapshots and collection times.
-**背包仓库** opens the newest complete snapshot by default. Select an older snapshot
+**背包仓库** opens the latest snapshot available for each category. Select an older snapshot
 in **背包快照历史** to view it. If two snapshots with the same collection time differ,
 the restore preview reports the conflict and keeps the local snapshot.
 
@@ -74,27 +74,34 @@ UID if there is one. Use the UIGF and UIAF controls for standard exchange files.
 ## Windows inventory snapshots
 
 Open **角色资料 → 背包仓库** to browse weapons, artifacts and materials for the
-selected game UID. The latest complete snapshot opens by default. Use **背包快照历史**
+selected game UID. Select a category to see its latest available snapshot. Use **背包快照历史**
 to view an older snapshot. Each view shows the original collection time and
 the inventory from that snapshot.
 
-Select or enter the path to a GOOD JSON export with weapons, artifacts and
-materials. Choose **预览背包导入至 UID** for the appropriate data space, verify that
-the collection covered all three categories, then choose **备份并确认完整导入**.
+Select or enter the path to a GOOD JSON export covering any of weapons,
+artifacts and materials. Choose **预览背包导入至 UID** for the appropriate data
+space and verify each supplied category. Choose **备份并确认导入所含类别** for a
+partial export or **备份并确认完整导入** for a complete one. Omitted categories keep
+their latest available snapshots. An explicit empty list or material map saves
+that category as empty.
 
 Inventory Kamera exports GOOD v2 and can collect equipment and materials from the
 game window. Its original filename supplies the local export time. Confirm the
-collection time and add its UTC offset, such as `+08:00`. If the file omits a
-category, you can continue after verifying that the game inventory for that
-category is empty. [Inventory Kamera](https://github.com/Andrewthe13th/Inventory_Kamera)
+collection time and add its UTC offset, such as `+08:00`. When a category is
+omitted, you can import the supplied categories immediately or include the
+omitted category after verifying that its game inventory is empty.
+[Inventory Kamera](https://github.com/Andrewthe13th/Inventory_Kamera)
 
 The launcher reads the UID and collection time declared by a GOOD v3 Leyline
-export. For other GOOD files, `metadata.uid` and `metadata.capturedAt` can supply
-the same information. [Leyline format](https://teyvat.me/developers#the-file)
+export. For GGScanner exports named `genshin_export_yyyy-MM-dd_HH-mm-ss.json`,
+the launcher suggests the local export time so you can confirm it and add its
+UTC offset. For other GOOD files, `metadata.uid` and `metadata.capturedAt` can
+supply the same information. [Leyline format](https://teyvat.me/developers#the-file)
 
 The inventory uses each snapshot's recorded quantities. Before importing, the
-launcher backs up the UID's current snapshot to `inventory-backups` in its data
-directory. A previous snapshot backup can be selected through the GOOD importer.
+launcher backs up the UID's current snapshots for the supplied categories to
+`inventory-backups` in its data directory. A previous snapshot backup can be
+selected through the GOOD importer.
 The first import records that the UID had no inventory yet.
 
 ## Windows character growth plans
@@ -155,7 +162,7 @@ The Exaiphanes Blade's level milestones use its
 ## Windows inventory stock for growth plans
 
 In either growth planner, choose **使用导入库存** to calculate shortfalls from
-the selected UID's latest complete GOOD snapshot. The editor shows the original
+the selected UID's latest GOOD snapshot containing materials. The editor shows the original
 collection time and imported quantities. A missing material has zero stock.
 Choose **使用手填库存** to return to your manual quantities. Each editor opens
 in manual mode, and **保存养成计划** saves manual stock edits while using manual

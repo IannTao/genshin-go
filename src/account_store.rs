@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 12;
+const SCHEMA_VERSION: u32 = 13;
 const ACHIEVEMENT_SCHEMA: &str = "
     CREATE TABLE achievement_records (
         uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
@@ -148,6 +148,7 @@ fn migrate(db: &mut Connection) -> Result<(), String> {
         (10, crate::inventory::SCHEMA),
         (11, crate::growth::SCHEMA),
         (12, crate::growth::WEAPON_SCHEMA),
+        (13, crate::inventory::COVERAGE_SCHEMA),
     ] {
         if version < introduced {
             migration
@@ -1094,6 +1095,61 @@ mod tests {
             crate::account_service::verify_uid(&authorization, &device_id(&path)?)?,
             account.uid
         );
+        Ok(())
+    }
+
+    #[test]
+    fn migrates_v12_inventory_snapshots_with_complete_coverage()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = isolated_database()?;
+        let db = open(&path)?;
+        db.execute_batch(
+            "DROP TABLE inventory_materials;
+             DROP TABLE material_catalog;
+             DROP TABLE inventory_snapshots;
+             PRAGMA user_version = 12;",
+        )?;
+        db.execute_batch(crate::inventory::SCHEMA)?;
+        db.execute("INSERT INTO uid_spaces (uid) VALUES ('123456789')", [])?;
+        db.execute(
+            "INSERT INTO inventory_snapshots
+                (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json)
+             VALUES ('123456789', '2026-10-10T07:50:00+08:00', 100, 'Inventory_Kamera', 2, '[]', '[]')",
+            [],
+        )?;
+        let snapshot_id = db.last_insert_rowid();
+        db.execute(
+            "INSERT INTO material_catalog (good_key) VALUES ('SlimeCondensate')",
+            [],
+        )?;
+        db.execute(
+            "INSERT INTO inventory_materials (snapshot_id, good_key, quantity) VALUES (?1, 'SlimeCondensate', 9)",
+            [snapshot_id],
+        )?;
+        drop(db);
+
+        let migrated = open(&path)?;
+        let coverage: u8 = migrated.query_row(
+            "SELECT coverage FROM inventory_snapshots WHERE id = ?1",
+            [snapshot_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(coverage, 7);
+        migrated.execute(
+            "INSERT INTO inventory_snapshots
+                (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json, coverage)
+             VALUES ('123456789', '2026-11-01T08:00:00+08:00', 200, 'yas-GOODScanner', 3, '[]', '[]', 3)",
+            [],
+        )?;
+        drop(migrated);
+
+        let latest = crate::inventory::latest_materials(&path, "123456789")?
+            .ok_or("missing migrated materials")?;
+        assert_eq!(latest.captured_at, "2026-10-10T07:50:00+08:00");
+        assert_eq!(latest.quantities.get("SlimeCondensate"), Some(&9));
+
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().ok_or("no directory")?)?;
         Ok(())
     }
 }

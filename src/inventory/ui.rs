@@ -1,4 +1,5 @@
 use super::{
+    ALL, ARTIFACTS, MATERIALS, WEAPONS,
     archive::{Archive, CaptureTime, Inventory},
     store::{self, Header, ImportEffect},
 };
@@ -149,7 +150,7 @@ impl ImportControls {
                 "文件未声明 UID，请明确选择导入目标".to_owned()
             };
             let omitted_confirmed = controls.omitted_confirmed;
-            let can_preview = archive.omitted_categories.is_empty() || omitted_confirmed.get();
+            let include_empty = omitted_confirmed.get();
             let timestamp = controls.timestamp;
             let preview = controls.preview;
             let message = controls.message;
@@ -158,6 +159,10 @@ impl ImportControls {
                     .gap_2()
                     .child(text(format!("来源：{} · GOOD v{}", archive.source, archive.version)))
                     .child(text(label))
+                    .child((archive.coverage != ALL && !include_empty).then(|| {
+                        let supplied = categories_label(archive.coverage);
+                        text(format!("文件包含：{supplied}。未提供的类别保留本机记录。"))
+                    }))
                     .child((!archive.omitted_categories.is_empty()).then(|| {
                         view()
                             .gap_2()
@@ -166,9 +171,9 @@ impl ImportControls {
                                 archive.omitted_categories.join("、"),
                             )))
                             .child(button(
-                                if can_preview { "撤回空库存确认" } else { "确认缺失类别的库存为空" },
+                                if include_empty { "撤回空库存确认" } else { "确认缺失类别的库存为空" },
                                 move || {
-                                    omitted_confirmed.set(!can_preview);
+                                    omitted_confirmed.set(!include_empty);
                                     preview.set(None);
                                 },
                             ))
@@ -178,7 +183,7 @@ impl ImportControls {
                     } else {
                         view()
                             .gap_2()
-                            .child(text("请输入原始采集时间及其时区。Inventory Kamera 的原始文件名可提供本地时间。"))
+                            .child(text("请输入原始采集时间及其时区。Inventory Kamera 或 GGScanner 的原始文件名可提供本地时间。"))
                             .child(
                                 input()
                                     .test_id("inventory-captured-at")
@@ -200,7 +205,6 @@ impl ImportControls {
                         view().flex_row().flex_wrap().gap_2().children(
                             targets
                                 .into_iter()
-                                .filter(|_| can_preview)
                                 .filter(|uid| archive.uid.as_ref().is_none_or(|expected| uid == expected))
                                 .map(|uid| {
                                     let controls = controls.clone();
@@ -217,13 +221,15 @@ impl ImportControls {
 
     fn preview_import(&self, uid: &str, archive: Rc<Archive>) {
         self.preview.set(None);
-        if !archive.omitted_categories.is_empty() && !self.omitted_confirmed.get_untracked() {
-            return;
-        }
         let time = self.timestamp.get_untracked();
+        let coverage = if self.omitted_confirmed.get_untracked() {
+            ALL
+        } else {
+            archive.coverage
+        };
         let result = CaptureTime::parse(archive.captured_at.as_deref().unwrap_or(&time)).and_then(
             |captured_at| {
-                let plan = store::preview(&self.database, uid, &archive, &captured_at)?;
+                let plan = store::preview(&self.database, uid, &archive, &captured_at, coverage)?;
                 Ok(PendingImport {
                     archive,
                     captured_at,
@@ -249,39 +255,69 @@ impl ImportControls {
                 return Some(view().child(text("本机历史已变化，请重新预览")));
             }
             let inventory = &pending.archive.inventory;
+            let coverage = pending.plan.coverage;
             let effect = pending.plan.effect;
             let confirm = controls.clone();
+            let counts = Category::ALL
+                .into_iter()
+                .filter(|category| coverage & *category as u8 != 0)
+                .map(|category| match category {
+                    Category::Weapons => format!("武器 {} 件", inventory.weapons.len()),
+                    Category::Artifacts => format!("圣遗物 {} 件", inventory.artifacts.len()),
+                    Category::Materials => format!("材料 {} 种", inventory.materials.len()),
+                })
+                .collect::<Vec<_>>()
+                .join(" · ");
+            let current_summary = match pending.plan.replaced.as_slice() {
+                [] => None,
+                [single] => Some(format!("目标 UID 最新快照：{}", single.captured_at)),
+                multiple => Some(format!(
+                    "目标 UID 当前相关快照：{}",
+                    multiple
+                        .iter()
+                        .map(|header| {
+                            format!(
+                                "{}（{}）",
+                                header.captured_at,
+                                categories_label(header.coverage)
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("、")
+                )),
+            };
             Some(
                 view()
                     .gap_2()
-                    .child(text(format!(
-                        "UID {} · 武器 {} 件 · 圣遗物 {} 件 · 材料 {} 种",
-                        pending.plan.uid,
-                        inventory.weapons.len(),
-                        inventory.artifacts.len(),
-                        inventory.materials.len(),
-                    )))
+                    .child(text(format!("UID {} · {counts}", pending.plan.uid)))
                     .child(text(format!(
                         "待导入采集时间：{}",
                         pending.captured_at.original
                     )))
-                    .child(
-                        pending.plan.current.as_ref().map(|current| {
-                            text(format!("目标 UID 最新快照：{}", current.captured_at))
-                        }),
-                    )
+                    .child(current_summary.map(text))
                     .child(text(match effect {
-                        ImportEffect::Latest => "导入后默认显示这份完整快照。",
+                        ImportEffect::Latest => "导入后，各类别按采集时间显示最新记录。",
                         ImportEffect::Historical => "这份快照较旧，导入后可在历史中主动选择。",
                         ImportEffect::Duplicate => "这份背包快照已保存。",
                     }))
                     .child((effect != ImportEffect::Duplicate).then(|| {
                         view()
                             .gap_2()
-                            .child(text("请确认三类数据均已完整采集，且扫描时未筛掉装备。"))
-                            .child(button("备份并确认完整导入", move || {
-                                confirm.import(&pending);
+                            .child(text(if coverage == ALL {
+                                "请确认三类数据均已完整采集，且扫描时未筛掉装备。"
+                            } else {
+                                "请确认文件提供的类别已经完整采集。"
                             }))
+                            .child(button(
+                                if coverage == ALL {
+                                    "备份并确认完整导入"
+                                } else {
+                                    "备份并确认导入所含类别"
+                                },
+                                move || {
+                                    confirm.import(&pending);
+                                },
+                            ))
                     })),
             )
         })
@@ -303,12 +339,16 @@ impl ImportControls {
             &pending.captured_at,
             &pending.plan,
         ) {
-            Ok(backup) => {
+            Ok(backups) => {
                 self.revision.update(|revision| *revision += 1);
+                let paths = backups
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join("、");
                 self.message.set(format!(
-                    "已导入 UID {} 的背包快照。导入前备份：{}",
+                    "已导入 UID {} 的背包快照。导入前备份：{paths}",
                     pending.plan.uid,
-                    backup.display(),
                 ));
             }
             Err(error) => self.message.set(format!("导入失败：{error}")),
@@ -337,6 +377,7 @@ fn browser(
 
 fn snapshot_browser(database: Rc<PathBuf>, uid: String, history: Vec<Header>) -> View {
     let selected = signal(0);
+    let position = signal((Category::Weapons, 0_usize));
     let history_open = signal(false);
     let history = Rc::new(history);
     let options = history.clone();
@@ -357,37 +398,64 @@ fn snapshot_browser(database: Rc<PathBuf>, uid: String, history: Vec<Header>) ->
                         } else {
                             format!("查看旧快照：{}", header.captured_at)
                         };
-                        button(label, move || selected.set(index)).into_element()
+                        button(label, move || {
+                            selected.set(index);
+                            position.update(|(_, page)| *page = 0);
+                        })
+                        .into_element()
                     }))
             })
         }))
+        .child(
+            view()
+                .flex_row()
+                .flex_wrap()
+                .gap_2()
+                .children(Category::ALL.into_iter().map(|category| {
+                    button(category.label(), move || position.set((category, 0))).into_element()
+                })),
+        )
         .child(dynamic(move || {
             let index = selected.get();
-            let header = &history[index];
+            let (category, page) = position.get();
+            let bit = category as u8;
+            let header = if index == 0 {
+                let Some(header) = history.iter().find(|header| header.coverage & bit != 0) else {
+                    return view().child(text(format!("{}记录尚未采集", category.label())));
+                };
+                header
+            } else {
+                &history[index]
+            };
+            let content = if header.coverage & bit == 0 {
+                view().child(text(format!("此旧快照未包含{}记录", category.label())))
+            } else {
+                match store::read(&database, &uid, header.id) {
+                    Ok(inventory) => inventory_rows(&inventory, category, page, position),
+                    Err(error) => view().child(text(error)),
+                }
+            };
             view()
                 .gap_2()
-                .child(text(if index == 0 {
-                    "最新完整快照"
-                } else {
-                    "正在查看旧快照"
+                .child(text(match (index, header.coverage) {
+                    (0, ALL) => "最新完整快照",
+                    (0, _) => "最新分类快照",
+                    _ => "正在查看旧快照",
                 }))
                 .child(text(format!("采集时间：{}", header.captured_at)))
                 .child(text(format!(
                     "来源：{} · GOOD v{}",
                     header.source, header.version
                 )))
-                .child(match store::read(&database, &uid, header.id) {
-                    Ok(inventory) => inventory_rows(inventory),
-                    Err(error) => view().child(text(error)),
-                })
+                .child(content)
         }))
 }
 
 #[derive(Clone, Copy, PartialEq)]
 enum Category {
-    Weapons,
-    Artifacts,
-    Materials,
+    Weapons = WEAPONS as isize,
+    Artifacts = ARTIFACTS as isize,
+    Materials = MATERIALS as isize,
 }
 
 impl Category {
@@ -402,81 +470,79 @@ impl Category {
     }
 }
 
-fn inventory_rows(inventory: Inventory) -> View {
-    let position = signal((Category::Weapons, 0_usize));
-    let inventory = Rc::new(inventory);
+fn categories_label(coverage: u8) -> String {
+    Category::ALL
+        .into_iter()
+        .filter(|category| coverage & *category as u8 != 0)
+        .map(Category::label)
+        .collect::<Vec<_>>()
+        .join("、")
+}
+
+fn inventory_rows(
+    inventory: &Inventory,
+    category: Category,
+    page: usize,
+    position: Signal<(Category, usize)>,
+) -> View {
+    let start = page * PAGE_SIZE;
+    let label = category.label();
+    let (total, rows): (_, Vec<_>) = match category {
+        Category::Weapons => (
+            inventory.weapons.len(),
+            inventory
+                .weapons
+                .iter()
+                .skip(start)
+                .take(PAGE_SIZE)
+                .map(super::archive::Weapon::label)
+                .collect(),
+        ),
+        Category::Artifacts => (
+            inventory.artifacts.len(),
+            inventory
+                .artifacts
+                .iter()
+                .skip(start)
+                .take(PAGE_SIZE)
+                .map(super::archive::Artifact::label)
+                .collect(),
+        ),
+        Category::Materials => (
+            inventory.materials.len(),
+            inventory
+                .materials
+                .iter()
+                .skip(start)
+                .take(PAGE_SIZE)
+                .map(|(key, amount)| format!("{key} · 数量 {amount}"))
+                .collect(),
+        ),
+    };
+    if total == 0 {
+        return view().child(text(format!("此快照无{label}记录")));
+    }
     view()
         .gap_2()
+        .child(text(format!(
+            "{label} · 共 {total} 项 · 第 {}/{} 页",
+            page + 1,
+            total.div_ceil(PAGE_SIZE)
+        )))
+        .children(rows.into_iter().map(|row| text(row).into_element()))
         .child(
             view()
                 .flex_row()
-                .flex_wrap()
                 .gap_2()
-                .children(Category::ALL.into_iter().map(|category| {
-                    button(category.label(), move || position.set((category, 0))).into_element()
+                .child((page > 0).then(|| {
+                    button("上一页背包", move || {
+                        position.set((category, page - 1));
+                    })
+                }))
+                .child((start + PAGE_SIZE < total).then(|| {
+                    button("下一页背包", move || {
+                        position.set((category, page + 1));
+                    })
                 })),
         )
-        .child(dynamic(move || {
-            let (category, page) = position.get();
-            let start = page * PAGE_SIZE;
-            let label = category.label();
-            let (total, rows): (_, Vec<_>) = match category {
-                Category::Weapons => (
-                    inventory.weapons.len(),
-                    inventory
-                        .weapons
-                        .iter()
-                        .skip(start)
-                        .take(PAGE_SIZE)
-                        .map(super::archive::Weapon::label)
-                        .collect(),
-                ),
-                Category::Artifacts => (
-                    inventory.artifacts.len(),
-                    inventory
-                        .artifacts
-                        .iter()
-                        .skip(start)
-                        .take(PAGE_SIZE)
-                        .map(super::archive::Artifact::label)
-                        .collect(),
-                ),
-                Category::Materials => (
-                    inventory.materials.len(),
-                    inventory
-                        .materials
-                        .iter()
-                        .skip(start)
-                        .take(PAGE_SIZE)
-                        .map(|(key, amount)| format!("{key} · 数量 {amount}"))
-                        .collect(),
-                ),
-            };
-            if total == 0 {
-                return view().child(text(format!("此快照无{label}记录")));
-            }
-            view()
-                .gap_2()
-                .child(text(format!(
-                    "{label} · 共 {total} 项 · 第 {}/{} 页",
-                    page + 1,
-                    total.div_ceil(PAGE_SIZE)
-                )))
-                .children(rows.into_iter().map(|row| text(row).into_element()))
-                .child(
-                    view()
-                        .flex_row()
-                        .gap_2()
-                        .child((page > 0).then(|| {
-                            button("上一页背包", move || {
-                                position.set((category, page - 1));
-                            })
-                        }))
-                        .child((start + PAGE_SIZE < total).then(|| {
-                            button("下一页背包", move || {
-                                position.set((category, page + 1));
-                            })
-                        })),
-                )
-        }))
 }

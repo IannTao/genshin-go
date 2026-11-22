@@ -346,6 +346,83 @@ windowsTest("previews and backs up a complete inventory before importing it for 
   expect(app.texts()).not.toContain("备份并确认完整导入");
 }, 60000);
 
+windowsTest("imports a partial GOOD inventory and keeps omitted material counts after reopening", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450125");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/inventory-good-newer.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450125");
+  await app.press("备份并确认完整导入");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-scanner.json");
+  await app.press("读取 GOOD 文件");
+  expect(app.texts()).toContain("文件包含：武器、圣遗物。未提供的类别保留本机记录。");
+  await app.press("预览背包导入至 UID 123450125");
+  await app.press("备份并确认导入所含类别");
+
+  const reopened = await open(".", { width: 1024, height: 1000 });
+  await reopened.press("角色资料");
+  if (!reopened.texts().includes("当前游戏 UID：123450125")) {
+    await reopened.press("切换至 UID：123450125");
+  }
+  await reopened.press("背包仓库");
+  expect(reopened.texts().join("\n")).toContain("DullBlade · 等级 20");
+  await reopened.press("圣遗物");
+  expect(reopened.texts()).toContain("此快照无圣遗物记录");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("SlimeCondensate · 数量 3");
+
+  await reopened.type("inventory-file", "tests/data/inventory-good-kamera-materials.json");
+  await reopened.press("读取 GOOD 文件");
+  await reopened.press("预览背包导入至 UID 123450125");
+  expect(reopened.texts()).toContain("UID 123450125 · 材料 1 种");
+  await reopened.press("备份并确认导入所含类别");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("SlimeCondensate · 数量 4");
+  await reopened.press("武器");
+  expect(reopened.texts().join("\n")).toContain("DullBlade · 等级 20");
+
+  await reopened.press("背包快照历史");
+  await reopened.press("查看旧快照：2026-11-01T08:00:00+08:00");
+  await reopened.press("材料");
+  expect(reopened.texts()).toContain("正在查看旧快照");
+  expect(reopened.texts()).toContain("采集时间：2026-11-01T08:00:00+08:00");
+  expect(reopened.texts()).toContain("此旧快照未包含材料记录");
+
+  await reopened.clear("inventory-file");
+  await reopened.type("inventory-file", "tests/data/genshin_export_2026-11-03_08-00-00.json");
+  await reopened.press("读取 GOOD 文件");
+  await reopened.type("inventory-captured-at", "+08:00");
+  await reopened.press("预览背包导入至 UID 123450125");
+  expect(reopened.texts()).toContain("待导入采集时间：2026-11-03T08:00:00+08:00");
+
+  await reopened.clear("inventory-file");
+  await reopened.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await reopened.press("读取 GOOD 文件");
+  await reopened.clear("inventory-captured-at");
+  await reopened.type("inventory-captured-at", "2026-11-04T08:00:00+08:00");
+  await reopened.press("预览背包导入至 UID 123450125");
+  expect(reopened.texts()).toContain(
+    "目标 UID 当前相关快照：2026-11-02T08:00:00+08:00（材料）、2026-11-01T08:00:00+08:00（武器、圣遗物）",
+  );
+  await reopened.press("备份并确认完整导入");
+  const multiResult = reopened.texts().find((line) => line.startsWith("已导入 UID 123450125 的背包快照。"));
+  expect(multiResult).toBeDefined();
+  const backups = (multiResult?.split("导入前备份：")[1] ?? "").split("、");
+  expect(backups.length).toBe(2);
+  for (const backupPath of backups) {
+    await reopened.clear("inventory-file");
+    await reopened.type("inventory-file", backupPath);
+    await reopened.press("读取 GOOD 文件");
+    await reopened.press("预览背包导入至 UID 123450125");
+    expect(reopened.texts()).toContain("这份背包快照已保存。");
+  }
+}, 60000);
+
 windowsTest("keeps older inventory selectable and reopens separate UID inventories", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");
@@ -404,7 +481,8 @@ windowsTest("uses the incomplete-category confirmation and preserves the UID and
   await app.press("背包仓库");
   await app.type("inventory-file", "tests/data/inventory-good-kamera-empty-artifacts.json");
   await app.press("读取 GOOD 文件");
-  expect(app.texts()).not.toContain("预览背包导入至 UID 123450123");
+  await app.press("预览背包导入至 UID 123450123");
+  expect(app.texts()).toContain("UID 123450123 · 武器 1 件 · 材料 1 种");
   await app.press("确认缺失类别的库存为空");
   await app.press("预览背包导入至 UID 123450123");
   expect(app.texts()).toContain("UID 123450123 · 武器 1 件 · 圣遗物 0 件 · 材料 1 种");

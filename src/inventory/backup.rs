@@ -1,4 +1,4 @@
-//! Portable history of complete inventory snapshots for one game UID.
+//! Portable history of inventory snapshots for one game UID.
 
 use super::{
     archive::{CaptureTime, Inventory, valid_good_source},
@@ -15,10 +15,24 @@ struct Snapshot {
     captured_at: String,
     source: String,
     good_version: u8,
+    #[serde(default = "complete", skip_serializing_if = "is_complete")]
+    coverage: u8,
     inventory: Object<Inventory>,
 }
 
-/// Holds the complete inventory history keyed by the instant each snapshot was collected.
+const fn complete() -> u8 {
+    super::ALL
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "Serde passes the field by reference"
+)]
+fn is_complete(coverage: &u8) -> bool {
+    *coverage == complete()
+}
+
+/// Holds the inventory snapshot history keyed by the instant each snapshot was collected.
 #[derive(Default, Deserialize)]
 #[serde(try_from = "Vec<Object<Snapshot>>")]
 pub(crate) struct Data(BTreeMap<i64, Snapshot>);
@@ -39,7 +53,7 @@ impl TryFrom<Vec<Object<Snapshot>>> for Data {
             if !valid_good_source(snapshot.good_version, &snapshot.source) {
                 return Err("背包快照须包含有效的 GOOD 版本和来源".into());
             }
-            snapshot.inventory.0.validate()?;
+            snapshot.inventory.0.validate_coverage(snapshot.coverage)?;
             snapshot.captured_at = time.original;
             match history.entry(time.nanos) {
                 Entry::Vacant(entry) => {
@@ -58,7 +72,7 @@ impl TryFrom<Vec<Object<Snapshot>>> for Data {
 }
 
 impl Data {
-    /// Captures all complete snapshots from the caller's database snapshot.
+    /// Captures all inventory snapshots from the caller's database snapshot.
     pub(crate) fn capture(db: &Connection, uid: &str) -> Result<Self, String> {
         store::headers(db, uid)?
             .into_iter()
@@ -69,6 +83,7 @@ impl Data {
                         captured_at: header.captured_at,
                         source: header.source,
                         good_version: header.version,
+                        coverage: header.coverage,
                         inventory: Object(store::inventory(db, uid, header.id)?),
                     },
                 ))
@@ -90,6 +105,7 @@ impl Data {
                 &snapshot.source,
                 uid,
                 &snapshot.captured_at,
+                snapshot.coverage,
             )?;
         }
         Ok(())
@@ -101,7 +117,12 @@ impl Data {
         for (&instant, snapshot) in &self.0 {
             match before.0.get(&instant) {
                 None => restore.additions.push(instant),
-                Some(local) if local.inventory.0 == snapshot.inventory.0 => restore.duplicates += 1,
+                Some(local)
+                    if local.coverage == snapshot.coverage
+                        && local.inventory.0 == snapshot.inventory.0 =>
+                {
+                    restore.duplicates += 1;
+                }
                 Some(_) => restore.conflicts.push(snapshot.captured_at.clone()),
             }
         }
@@ -135,6 +156,7 @@ impl Data {
                 snapshot.good_version,
                 &snapshot.source,
                 &snapshot.inventory.0,
+                snapshot.coverage,
             )?;
         }
         Ok(())
@@ -151,7 +173,7 @@ pub(crate) struct Restore {
 }
 
 impl Restore {
-    /// Reports whether the restore adds any complete snapshots.
+    /// Reports whether the restore adds any snapshots.
     pub(crate) fn has_additions(&self) -> bool {
         !self.additions.is_empty()
     }
@@ -175,5 +197,46 @@ impl Restore {
             )
         });
         std::iter::once(summary).chain(latest).chain(conflicts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn partial_json(coverage: u8, materials: &serde_json::Value) -> String {
+        serde_json::json!([{
+            "captured_at": "2026-11-01T08:00:00+08:00",
+            "source": "yas-GOODScanner",
+            "good_version": 3,
+            "coverage": coverage,
+            "inventory": {
+                "weapons": [],
+                "artifacts": [],
+                "materials": materials
+            }
+        }])
+        .to_string()
+    }
+
+    #[test]
+    fn validates_partial_snapshot_coverage_and_detects_coverage_conflicts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let inconsistent = partial_json(super::super::WEAPONS, &serde_json::json!({"Mora": 1}));
+        assert!(serde_json::from_str::<Data>(&inconsistent).is_err());
+
+        let equipment: Data =
+            serde_json::from_str(&partial_json(super::super::WEAPONS, &serde_json::json!({})))?;
+        let encoded = serde_json::to_string(&equipment)?;
+        assert!(encoded.contains("\"coverage\":1"));
+        let roundtrip: Data = serde_json::from_str(&encoded)?;
+        assert_eq!(equipment.plan(&roundtrip).duplicates, 1);
+
+        let complete: Data =
+            serde_json::from_str(&partial_json(super::super::ALL, &serde_json::json!({})))?;
+        let restore = complete.plan(&equipment);
+        assert_eq!(restore.conflicts, vec!["2026-11-01T08:00:00+08:00"]);
+        assert!(!restore.has_additions());
+        Ok(())
     }
 }

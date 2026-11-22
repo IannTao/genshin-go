@@ -40,7 +40,9 @@ pub(super) struct Header {
     pub captured_at: String,
     pub source: String,
     pub version: u8,
-    /// Contains the time used to sort complete snapshots across time zones.
+    /// Identifies the saved categories.
+    pub coverage: u8,
+    /// Contains the time used to sort snapshots across time zones.
     pub(super) captured_nanos: i64,
 }
 
@@ -60,7 +62,8 @@ pub(super) enum ImportEffect {
 pub(super) struct Preview {
     pub uid: String,
     pub effect: ImportEffect,
-    pub current: Option<Header>,
+    pub coverage: u8,
+    pub replaced: Vec<Header>,
     last_inserted: Option<i64>,
 }
 
@@ -73,7 +76,7 @@ pub(super) fn list(path: &Path, uid: &str) -> Result<Vec<Header>, String> {
 pub(super) fn headers(db: &Connection, uid: &str) -> Result<Vec<Header>, String> {
     let mut query = db
         .prepare(
-            "SELECT id, captured_at, source, good_version, captured_nanos
+            "SELECT id, captured_at, source, good_version, captured_nanos, coverage
              FROM inventory_snapshots WHERE uid = ?1 ORDER BY captured_nanos DESC",
         )
         .map_err(|error| database_error(&error))?;
@@ -85,6 +88,7 @@ pub(super) fn headers(db: &Connection, uid: &str) -> Result<Vec<Header>, String>
                 source: row.get(2)?,
                 version: row.get(3)?,
                 captured_nanos: row.get(4)?,
+                coverage: row.get(5)?,
             })
         })
         .and_then(Iterator::collect)
@@ -105,8 +109,8 @@ pub(super) fn latest_materials(path: &Path, uid: &str) -> Result<Option<Material
     let snapshot = read
         .query_row(
             "SELECT id, captured_at FROM inventory_snapshots
-             WHERE uid = ?1 ORDER BY captured_nanos DESC LIMIT 1",
-            [uid],
+             WHERE uid = ?1 AND (coverage & ?2) <> 0 ORDER BY captured_nanos DESC LIMIT 1",
+            params![uid, super::MATERIALS],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()
@@ -121,7 +125,7 @@ pub(super) fn latest_materials(path: &Path, uid: &str) -> Result<Option<Material
         .transpose()
 }
 
-/// Reads one complete inventory from the caller's database snapshot.
+/// Reads a saved inventory from the caller's database snapshot.
 pub(super) fn inventory(db: &Connection, uid: &str, id: i64) -> Result<Inventory, String> {
     let (weapons, artifacts) = db
         .query_row(
@@ -154,10 +158,11 @@ pub(super) fn preview(
     uid: &str,
     archive: &Archive,
     captured_at: &CaptureTime,
+    coverage: u8,
 ) -> Result<Preview, String> {
     let mut db = open(path)?;
     let read = db.transaction().map_err(|error| database_error(&error))?;
-    plan(&read, uid, archive, captured_at)
+    plan(&read, uid, archive, captured_at, coverage)
 }
 
 fn plan(
@@ -165,6 +170,7 @@ fn plan(
     uid: &str,
     archive: &Archive,
     captured_at: &CaptureTime,
+    coverage: u8,
 ) -> Result<Preview, String> {
     if archive
         .uid
@@ -184,42 +190,56 @@ fn plan(
         return Err("请先创建导入目标的 UID 数据空间".into());
     }
     let history = headers(db, uid)?;
+    let last_inserted = history.iter().map(|header| header.id).max();
     let effect = if let Some(existing) = history
         .iter()
         .find(|entry| entry.captured_nanos == captured_at.nanos)
     {
-        if inventory(db, uid, existing.id)? != archive.inventory {
+        if existing.coverage != coverage || inventory(db, uid, existing.id)? != archive.inventory {
             return Err("已有采集时间相同但内容不同的快照，请核对原始采集时间".into());
         }
         ImportEffect::Duplicate
     } else if history
-        .first()
-        .is_some_and(|latest| latest.captured_nanos > captured_at.nanos)
+        .iter()
+        .take_while(|header| header.captured_nanos > captured_at.nanos)
+        .fold(0, |newer, header| newer | header.coverage)
+        & coverage
+        == coverage
     {
         ImportEffect::Historical
     } else {
         ImportEffect::Latest
     };
+    let mut remaining = coverage;
+    let replaced = history
+        .into_iter()
+        .filter(|header| {
+            let affected = header.coverage & remaining;
+            remaining &= !affected;
+            affected != 0
+        })
+        .collect();
     Ok(Preview {
         uid: uid.to_owned(),
         effect,
-        last_inserted: history.iter().map(|header| header.id).max(),
-        current: history.into_iter().next(),
+        coverage,
+        last_inserted,
+        replaced,
     })
 }
 
-/// Rechecks the preview, saves a backup and inserts a complete snapshot atomically.
+/// Rechecks the preview, backs up the affected categories and saves the snapshot.
 pub(super) fn import(
     path: &Path,
     archive: &Archive,
     captured_at: &CaptureTime,
     preview: &Preview,
-) -> Result<PathBuf, String> {
+) -> Result<Vec<PathBuf>, String> {
     let mut db = open(path)?;
     let write = db
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| database_error(&error))?;
-    let actual = plan(&write, &preview.uid, archive, captured_at)?;
+    let actual = plan(&write, &preview.uid, archive, captured_at, preview.coverage)?;
     if &actual != preview {
         return Err("背包快照已变化，请重新预览".into());
     }
@@ -232,8 +252,9 @@ pub(super) fn import(
         &archive.source,
         &actual.uid,
         &captured_at.original,
+        actual.coverage,
     )?;
-    let backup =
+    let backups =
         backup(path, &write, &actual).map_err(|error| format!("导入前备份失败：{error}"))?;
     insert(
         &write,
@@ -242,12 +263,13 @@ pub(super) fn import(
         archive.version,
         &archive.source,
         &archive.inventory,
+        actual.coverage,
     )?;
     write.commit().map_err(|error| database_error(&error))?;
-    Ok(backup)
+    Ok(backups)
 }
 
-/// Saves all three categories as one immutable snapshot in the caller's transaction.
+/// Saves the supplied categories as a snapshot in the caller's transaction.
 pub(super) fn insert(
     db: &Connection,
     uid: &str,
@@ -255,24 +277,39 @@ pub(super) fn insert(
     version: u8,
     source: &str,
     inventory: &Inventory,
+    coverage: u8,
 ) -> Result<(), String> {
     let encode_error = |error| format!("无法编码背包记录：{error}");
+    let weapons = if coverage & super::WEAPONS != 0 {
+        serde_json::to_string(&inventory.weapons).map_err(encode_error)?
+    } else {
+        "[]".into()
+    };
+    let artifacts = if coverage & super::ARTIFACTS != 0 {
+        serde_json::to_string(&inventory.artifacts).map_err(encode_error)?
+    } else {
+        "[]".into()
+    };
     db.execute(
         "INSERT INTO inventory_snapshots
-             (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (uid, captured_at, captured_nanos, source, good_version, weapons_json, artifacts_json, coverage)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             uid,
             captured_at.original,
             captured_at.nanos,
             source,
             version,
-            serde_json::to_string(&inventory.weapons).map_err(encode_error)?,
-            serde_json::to_string(&inventory.artifacts).map_err(encode_error)?,
+            weapons,
+            artifacts,
+            coverage,
         ],
     )
     .map_err(|error| database_error(&error))?;
-    save_materials(db, db.last_insert_rowid(), inventory)
+    if coverage & super::MATERIALS != 0 {
+        save_materials(db, db.last_insert_rowid(), inventory)?;
+    }
+    Ok(())
 }
 
 fn save_materials(db: &Connection, id: i64, inventory: &Inventory) -> Result<(), String> {
@@ -292,28 +329,39 @@ fn save_materials(db: &Connection, id: i64, inventory: &Inventory) -> Result<(),
     save().map_err(|error| database_error(&error))
 }
 
-fn backup(path: &Path, db: &Connection, preview: &Preview) -> Result<PathBuf, String> {
+fn backup(path: &Path, db: &Connection, preview: &Preview) -> Result<Vec<PathBuf>, String> {
     let uid = &preview.uid;
     let unique = windows::core::GUID::new().map_err(|_| "无法生成背包备份文件名")?;
     let destination = path
         .with_file_name("inventory-backups")
         .join(format!("{uid}-{unique:?}.json"));
-    let bytes = if let Some(header) = &preview.current {
-        inventory(db, uid, header.id)?.encode(
-            header.version,
-            &header.source,
-            uid,
-            &header.captured_at,
-        )?
-    } else {
-        serde_json::to_vec(&serde_json::json!({
+    if preview.replaced.is_empty() {
+        let bytes = serde_json::to_vec(&serde_json::json!({
             "format": "genshin-go-inventory-backup",
             "version": 1,
             "uid": uid,
             "snapshot": null
         }))
-        .map_err(|error| format!("无法编码背包备份：{error}"))?
-    };
-    atomic_write(&destination, &bytes)?;
-    Ok(destination)
+        .map_err(|error| format!("无法编码背包备份：{error}"))?;
+        atomic_write(&destination, &bytes)?;
+        return Ok(vec![destination]);
+    }
+    let mut written = Vec::with_capacity(preview.replaced.len());
+    for (index, header) in preview.replaced.iter().enumerate() {
+        let bytes = inventory(db, uid, header.id)?.encode(
+            header.version,
+            &header.source,
+            uid,
+            &header.captured_at,
+            header.coverage,
+        )?;
+        let file = if index == 0 {
+            destination.clone()
+        } else {
+            destination.with_file_name(format!("{uid}-{unique:?}-{}.json", index + 1))
+        };
+        atomic_write(&file, &bytes)?;
+        written.push(file);
+    }
+    Ok(written)
 }
