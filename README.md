@@ -89,6 +89,33 @@ launcher backs up the UID's current snapshot to `inventory-backups` in its data
 directory. A previous snapshot backup can be selected through the GOOD importer.
 The first import records that the UID had no inventory yet.
 
+## Windows character growth plans
+
+Open **角色资料 → 角色养成计划**, choose a UID, and search for a character. Enter
+the current and target level, completed ascension phase (0–6), and base levels
+for normal attack, elemental skill and elemental burst. A character at 20/20
+has phase 0, and a character at 20/40 has phase 1. The panel shows the required
+materials and updates each shortfall as you enter manual stock. Click
+**保存养成计划** to save the plan and the displayed stock edits for the selected UID.
+Saved plans reopen without signing in. Manual stock is shared among that UID's
+plans. **删除历史记录** clears both the plans and manual stock for the selected UID.
+
+The planner calculates character EXP from the start of the entered level. It
+rounds each segment ending at an ascension cap or the target level up to a whole
+1,000 EXP book unit, and estimates 1 Mora per 5 EXP in that total. In-game
+costs can vary with existing EXP and the books you use. See the
+[official notes on EXP overflow](https://genshin.hoyoverse.com/en/news/detail/125553).
+Traveler forms have separate plans for their separate talents. Each form's calculation uses
+the level and ascension you enter for that plan, which you can update after
+advancing Traveler in the game.
+
+The offline Simplified Chinese catalog uses the character and talent costs in
+[genshin-db v5.2.16 for Genshin Impact 7.2](https://github.com/theBowja/genshin-db/releases/tag/v5.2.16)
+under the [bundled MIT notice](assets/achievement-catalog-LICENSE.txt).
+The experience curve comes from the [per-level progression table](https://github.com/devesh-anand/genshin-api/blob/586626c333cffa8c4eeb3e78a40bf642d0abbdb9/data/progression.json)
+and uses the [official 95/100 rules](https://genshin.hoyoverse.com/en/news/detail/159349)
+for levels above 90.
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

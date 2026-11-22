@@ -6,6 +6,104 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("counts experience-book rounding at ascension caps", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450223");
+  await app.press("创建 UID 数据空间");
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "22");
+  await app.clear("growth-target-phase");
+  await app.type("growth-target-phase", "1");
+  await app.type("growth-stock-104001", "152");
+  expect(app.texts()).toContain("角色经验 · 需求 151850");
+  expect(app.texts()).toContain("经验书折算 · 需求 153000 · 缺口 1000");
+  expect(app.texts()).toContain("摩拉 · 需求 50600 · 缺口 50600");
+
+  await app.type("growth-stock-100055", "invalid");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "2");
+  await app.clear("growth-target-phase");
+  await app.type("growth-target-phase", "0");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存安柏的养成计划");
+}, 60000);
+
+windowsTest("saves a character plan and manual material stock for the selected UID", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450221");
+  await app.press("创建 UID 数据空间");
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-current-level");
+  await app.type("growth-current-level", "20");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "20");
+  await app.clear("growth-target-phase");
+  await app.type("growth-target-phase", "1");
+  expect(app.texts()).toContain("小灯草 · 需求 3 · 缺口 3");
+  await app.type("growth-stock-100055", "2");
+  expect(app.texts()).toContain("小灯草 · 需求 3 · 缺口 1");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存安柏的养成计划");
+
+  await app.type("game-uid", "123450222");
+  await app.press("创建 UID 数据空间");
+  await app.waitFor("暂无角色养成计划");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "2");
+  await app.waitFor("经验书折算 · 需求 1000 · 缺口 1000");
+  await app.type("growth-stock-104001", "1");
+  await app.waitFor("经验书折算 · 需求 1000 · 缺口 0");
+  await app.press("保存养成计划");
+
+  const reopened = await open(".", { width: 1024, height: 1000 });
+  await reopened.press("角色资料");
+  await reopened.press("角色养成计划");
+  await reopened.press("查看安柏的计划（等级 1 → 2）");
+  expect(reopened.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
+  await reopened.press("切换至 UID：123450221");
+  await reopened.press("查看安柏的计划（等级 20 → 20）");
+  expect(reopened.texts()).toContain("小灯草 · 需求 3 · 缺口 1");
+  await reopened.clear("growth-current-level");
+  await reopened.type("growth-current-level", "40");
+  await reopened.clear("growth-current-phase");
+  await reopened.type("growth-current-phase", "1");
+  await reopened.clear("growth-target-level");
+  await reopened.type("growth-target-level", "41");
+  await reopened.clear("growth-target-phase");
+  await reopened.type("growth-target-phase", "2");
+  await reopened.clear("growth-target-normal");
+  await reopened.type("growth-target-normal", "2");
+  expect(reopened.texts()).toContain("小灯草 · 需求 10 · 缺口 8");
+  expect(reopened.texts()).toContain("牢固的箭簇 · 需求 21 · 缺口 21");
+  expect(reopened.texts()).toContain("「自由」的教导 · 需求 3 · 缺口 3");
+  expect(reopened.texts()).toContain("摩拉 · 需求 61900 · 缺口 61900");
+  await reopened.press("保存养成计划");
+  await reopened.waitFor("查看安柏的计划（等级 40 → 41）");
+
+  await reopened.press("资料管理");
+  reopened.onDialog(() => "确认删除 UID：123450221");
+  await reopened.press("删除历史记录");
+  await reopened.waitFor("暂无角色养成计划");
+  await reopened.type("growth-search", "安柏");
+  await reopened.press("规划安柏");
+  await reopened.clear("growth-target-level");
+  await reopened.type("growth-target-level", "20");
+  await reopened.clear("growth-target-phase");
+  await reopened.type("growth-target-phase", "1");
+  expect(reopened.texts()).toContain("小灯草 · 需求 3 · 缺口 3");
+  await reopened.press("切换至 UID：123450222");
+  await reopened.press("查看安柏的计划（等级 1 → 2）");
+  expect(reopened.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
+}, 60000);
+
 windowsTest("previews and backs up a complete inventory before importing it for the chosen UID", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");
