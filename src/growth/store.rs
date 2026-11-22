@@ -1,4 +1,4 @@
-use super::{MaterialCounts, Plan};
+use super::{Kind, MaterialCounts, Plan};
 use crate::account_store::{database_error, open};
 use rusqlite::params;
 use std::{collections::BTreeMap, path::Path};
@@ -18,19 +18,34 @@ pub(super) const SCHEMA: &str = "
         PRIMARY KEY (uid, material_id)
     );";
 
+/// Creates the weapon plans table under the UID history deletion boundary.
+pub(super) const WEAPON_SCHEMA: &str = "
+    CREATE TABLE weapon_growth_plans (
+        uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
+        weapon_key TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        PRIMARY KEY (uid, weapon_key)
+    );";
+
 /// Holds the saved plans and manual quantities for one UID.
 pub(super) struct Saved {
+    /// Contains the plans of the requested kind.
     pub(super) plans: BTreeMap<String, Plan>,
+    /// Contains the manual material quantities shared by both planners.
     pub(super) stock: MaterialCounts,
 }
 
 /// Reads the saved planning data from one snapshot of the UID's history.
-pub(super) fn load(path: &Path, uid: &str) -> Result<Saved, String> {
+pub(super) fn load(path: &Path, uid: &str, kind: Kind) -> Result<Saved, String> {
     let mut db = open(path)?;
     let read = db.transaction().map_err(|error| database_error(&error))?;
-    let mut plans = read
-        .prepare("SELECT character_key, plan_json FROM character_growth_plans WHERE uid = ?1")
-        .map_err(|error| database_error(&error))?;
+    let sql = match kind {
+        Kind::Character => {
+            "SELECT character_key, plan_json FROM character_growth_plans WHERE uid = ?1"
+        }
+        Kind::Weapon => "SELECT weapon_key, plan_json FROM weapon_growth_plans WHERE uid = ?1",
+    };
+    let mut plans = read.prepare(sql).map_err(|error| database_error(&error))?;
     let plans = plans
         .query_map([uid], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -39,7 +54,7 @@ pub(super) fn load(path: &Path, uid: &str) -> Result<Saved, String> {
         .map(|row| {
             let (key, json) = row.map_err(|error| database_error(&error))?;
             let plan = serde_json::from_str(&json)
-                .map_err(|error| format!("无法读取角色养成计划：{error}"))?;
+                .map_err(|error| format!("无法读取养成计划：{error}"))?;
             Ok((key, plan))
         })
         .collect::<Result<_, String>>()?;
@@ -58,6 +73,7 @@ pub(super) fn load(path: &Path, uid: &str) -> Result<Saved, String> {
 pub(super) fn save(
     path: &Path,
     uid: &str,
+    kind: Kind,
     key: &str,
     plan: Plan,
     stock: &MaterialCounts,
@@ -65,13 +81,19 @@ pub(super) fn save(
     let mut db = open(path)?;
     let write = db.transaction().map_err(|error| database_error(&error))?;
     let json =
-        serde_json::to_string(&plan).map_err(|error| format!("无法编码角色养成计划：{error}"))?;
-    write
-        .execute(
+        serde_json::to_string(&plan).map_err(|error| format!("无法编码养成计划：{error}"))?;
+    let sql = match kind {
+        Kind::Character => {
             "INSERT INTO character_growth_plans VALUES (?1, ?2, ?3)
-         ON CONFLICT(uid, character_key) DO UPDATE SET plan_json = excluded.plan_json",
-            params![uid, key, json],
-        )
+            ON CONFLICT(uid, character_key) DO UPDATE SET plan_json = excluded.plan_json"
+        }
+        Kind::Weapon => {
+            "INSERT INTO weapon_growth_plans VALUES (?1, ?2, ?3)
+            ON CONFLICT(uid, weapon_key) DO UPDATE SET plan_json = excluded.plan_json"
+        }
+    };
+    write
+        .execute(sql, params![uid, key, json])
         .map_err(|error| database_error(&error))?;
     {
         let mut upsert = write

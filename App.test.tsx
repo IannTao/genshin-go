@@ -6,6 +6,122 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("saves weapon growth and shares manual stock within the selected UID", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450224");
+  await app.press("创建 UID 数据空间");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "13301");
+  await app.press("规划白缨枪");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "21");
+  await app.waitFor("目标状态：此突破阶段的等级须为 1 至 20");
+  await app.clear("weapon-growth-target-phase");
+  await app.type("weapon-growth-target-phase", "1");
+  expect(app.texts()).toContain("武器经验 · 需求 60400");
+  expect(app.texts()).toContain("强化矿折算 · 需求 60800 · 缺口 60800");
+  expect(app.texts()).toContain("摩拉 · 需求 11080 · 缺口 11080");
+  expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 缺口 2");
+  await app.type("weapon-growth-stock-114013", "1");
+  await app.type("weapon-growth-stock-104012", "1");
+  await app.type("weapon-growth-stock-202", "1000");
+  expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 缺口 1");
+  expect(app.texts()).toContain("强化矿折算 · 需求 60800 · 缺口 58800");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存白缨枪的养成计划");
+
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "2");
+  expect(app.texts()).toContain("摩拉 · 需求 200 · 缺口 0");
+
+  await app.type("game-uid", "123450225");
+  await app.press("创建 UID 数据空间");
+  await app.press("武器养成计划");
+  await app.waitFor("暂无武器养成计划");
+  await app.press("规划白缨枪");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "2");
+  expect(app.texts()).toContain("强化矿折算 · 需求 400 · 缺口 400");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存白缨枪的养成计划");
+
+  const reopened = await open(".", { width: 1024, height: 1000 });
+  await reopened.press("角色资料");
+  await reopened.press("武器养成计划");
+  await reopened.press("查看白缨枪的计划（等级 1 → 2）");
+  expect(reopened.texts()).toContain("强化矿折算 · 需求 400 · 缺口 400");
+  await reopened.press("切换至 UID：123450224");
+  await reopened.press("查看白缨枪的计划（等级 1 → 21）");
+  expect(reopened.texts()).toContain("强化矿折算 · 需求 60800 · 缺口 58800");
+  expect(reopened.texts()).toContain("孤云寒林的光砂 · 需求 2 · 缺口 1");
+  await reopened.clear("weapon-growth-current-level");
+  await reopened.type("weapon-growth-current-level", "20");
+  await reopened.press("保存养成计划");
+  await reopened.waitFor("查看白缨枪的计划（等级 20 → 21）");
+  expect(reopened.texts()).toContain("摩拉 · 需求 5720 · 缺口 4720");
+
+  await reopened.press("资料管理");
+  reopened.onDialog(() => "确认删除 UID：123450224");
+  await reopened.press("删除历史记录");
+  await reopened.waitFor("暂无武器养成计划");
+  await reopened.clear("weapon-growth-search");
+  await reopened.type("weapon-growth-search", "13301");
+  await reopened.press("规划白缨枪");
+  await reopened.clear("weapon-growth-target-level");
+  await reopened.type("weapon-growth-target-level", "2");
+  expect(reopened.texts()).toContain("摩拉 · 需求 40 · 缺口 40");
+  await reopened.press("切换至 UID：123450225");
+  await reopened.press("查看白缨枪的计划（等级 1 → 2）");
+}, 60000);
+
+windowsTest("applies the four ascension phases of a one-star weapon", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450226");
+  await app.press("创建 UID 数据空间");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "无锋剑");
+  await app.press("规划无锋剑");
+  await app.clear("weapon-growth-current-level");
+  await app.type("weapon-growth-current-level", "60");
+  await app.clear("weapon-growth-current-phase");
+  await app.type("weapon-growth-current-phase", "3");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "60");
+  await app.clear("weapon-growth-target-phase");
+  await app.type("weapon-growth-target-phase", "4");
+  expect(app.texts()).toContain("高塔孤王的断片 · 需求 1 · 缺口 1");
+  expect(app.texts()).toContain("摩拉 · 需求 10000 · 缺口 10000");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "71");
+  await app.waitFor("目标状态：此突破阶段的等级须为 60 至 70");
+  await app.clear("weapon-growth-target-phase");
+  await app.type("weapon-growth-target-phase", "5");
+  await app.waitFor("目标状态：突破阶段须为 0 至 4");
+}, 60000);
+
+windowsTest("plans the Exaiphanes Blade's quest levels without enhancement materials", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450227");
+  await app.press("创建 UID 数据空间");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "星锋剑");
+  await app.press("规划星锋剑");
+  await app.clear("weapon-growth-target-phase");
+  await app.type("weapon-growth-target-phase", "2");
+  await app.waitFor("目标状态：此阶段的等级须为 40");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "40");
+  await app.waitFor("无需养成材料");
+  await app.press("保存养成计划");
+  await app.waitFor("查看星锋剑的计划（等级 1 → 40）");
+}, 60000);
+
 windowsTest("counts experience-book rounding at ascension caps", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");

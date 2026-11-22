@@ -116,6 +116,34 @@ The experience curve comes from the [per-level progression table](https://github
 and uses the [official 95/100 rules](https://genshin.hoyoverse.com/en/news/detail/159349)
 for levels above 90.
 
+## Windows weapon growth plans
+
+Open **角色资料 → 武器养成计划**, select a UID, and search by weapon name or ID.
+Enter the current and target level and completed ascension phase. For example,
+20/20 is phase 0 and 20/40 is phase 1. One- and two-star weapons cap at level 70
+and phase 4. Standard three- to five-star weapons cap at level 90 and phase 6.
+For the Exaiphanes Blade, use the displayed quest levels. Its progression is
+unlocked through the story and Statues of The Seven in Snezhnaya.
+[Version 7.0 update details](https://weibo.com/ttarticle/p/show?id=2309405330984475427108)
+
+Enter manual stock to see the remaining requirements. **保存养成计划** saves the
+plan and its displayed stock edits. Character and weapon plans share the manual
+stock of the selected UID. **删除历史记录** clears those plans and quantities for
+that UID.
+
+The planner starts at the beginning of the entered level. It rounds each segment
+ending at an ascension cap or the target level up to 400 EXP and estimates 1 Mora
+per 10 EXP in the rounded total. For example, raising a White Tassel from level 1
+to level 21 needs 60,400 EXP, rounded to 60,800 EXP. With the first ascension,
+the plan requires 11,080 Mora and 2 Luminous Sands from Guyun.
+
+The Simplified Chinese names and ascension costs come from
+[genshin-db v5.2.16 for Genshin Impact 7.2](https://github.com/theBowja/genshin-db/releases/tag/v5.2.16)
+under the [bundled MIT notice](assets/achievement-catalog-LICENSE.txt). Weapon EXP
+curves use the [per-level game data](https://gitlab.com/GuraFoundation/YuanShenResources/-/blob/6044f5aae7dd79fbbe15c5748ef99b654f6132b7/ExcelBinOutput/WeaponLevelExcelConfigData.json).
+The Exaiphanes Blade's level milestones use its
+[enhancement table](https://gitlab.com/GuraFoundation/YuanShenResources/-/blob/6044f5aae7dd79fbbe15c5748ef99b654f6132b7/ExcelBinOutput/WeaponQuestSnezhnayaEnhanceExcelConfigData.json).
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

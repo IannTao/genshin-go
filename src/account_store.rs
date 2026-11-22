@@ -13,7 +13,7 @@ use windows::{
     core::w,
 };
 
-const SCHEMA_VERSION: u32 = 11;
+const SCHEMA_VERSION: u32 = 12;
 const ACHIEVEMENT_SCHEMA: &str = "
     CREATE TABLE achievement_records (
         uid TEXT NOT NULL REFERENCES uid_history(uid) ON DELETE CASCADE,
@@ -147,6 +147,7 @@ fn migrate(db: &mut Connection) -> Result<(), String> {
         (9, crate::scanner::SCHEMA),
         (10, crate::inventory::SCHEMA),
         (11, crate::growth::SCHEMA),
+        (12, crate::growth::WEAPON_SCHEMA),
     ] {
         if version < introduced {
             migration
@@ -533,6 +534,7 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "ALTER TABLE account_authorization DROP COLUMN revision;
+             DROP TABLE weapon_growth_plans;
              DROP TABLE character_growth_plans;
              DROP TABLE growth_material_stock;
              DROP TABLE inventory_materials;
@@ -586,6 +588,7 @@ mod tests {
         let db = open(&path)?;
         db.execute_batch(
             "DROP TABLE wish_records;
+             DROP TABLE weapon_growth_plans;
              DROP TABLE character_growth_plans;
              DROP TABLE growth_material_stock;
              DROP TABLE inventory_materials;
