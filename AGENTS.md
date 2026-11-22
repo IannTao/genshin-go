@@ -31,6 +31,10 @@
 
 ## Agent skills
 
+### 需求到任务工作流
+
+当用户提出 Genshin-Go 的新功能、产品行为或 UI/UE 变更需求，或点名 `genshin-go-workflow` 时，先读取并遵循 [genshin-go-workflow](.agents/skills/genshin-go-workflow/SKILL.md)。收到需求后，逐阶段自查并获得用户确认，再开始下一阶段。仅要求执行已有 Issue 时，遵循下方任务跟踪约定。
+
 ### Issue tracker
 
 规格与任务使用 GitHub Issues：IannTao/genshin-go。
