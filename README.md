@@ -2,6 +2,17 @@
 
 On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
+## Windows curated plugin catalog
+
+Open **扩展** to browse the curated plugin catalog maintained by Genshin-Go. The launcher
+does not connect to arbitrary third-party store sources. The initial confirmed entry is
+[FufuLauncher.UnlockerIsland](https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland)
+(pinned commit `1830f9d7`, 2026-11-18). The panel displays its verified type, version,
+upstream source, managed install location under `plugins/fufu-unlocker-island`, required
+administrator privileges and risk notice, compatible Windows native components, and
+AGPL-3.0 license notice. If catalog loading fails, the page reports the error and offers
+**重新加载目录** to retry.
+
 ## Windows owned character sync
 
 In **游戏管理**, select the Windows capture edition of `GGScanner.exe` (compatibility

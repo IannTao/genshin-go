@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "fufu-unlocker-island",
+      "name": "FufuLauncher.UnlockerIsland",
+      "kind": "游戏注入模块",
+      "version": "1830f9d7（2026-11-18 固定提交）",
+      "commit": "1830f9d770ecb9c895ba98b9a933973eabe36e7a",
+      "source_url": "https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland",
+      "install_subpath": "fufu-unlocker-island",
+      "permissions": "需管理员权限；原生 DLL 随游戏进程加载，含远端公告与访问状态检查（特定拒绝结果可能结束游戏），存在第三方工具账号风险；默认关闭，仅用户主动启用后使用",
+      "compatible_format": "Windows x64 原生组件（Launcher_2.exe / Launcher.dll、FufuLauncher.UnlockerIsland.dll 及模块 INI 配置）；上游组件仓库暂无 GitHub Release",
+      "license": "AGPL-3.0（上游含预编译 MinHook 库，随包分发前须核对许可告知与对应源码义务）",
+      "notes": "已按上游静态核查纳入首批精选目录；安装、手动更新、卸载与可选注入启动将在后续版本开放，当前不影响普通启动。"
+    }
+  ]
+}

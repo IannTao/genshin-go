@@ -182,6 +182,14 @@ pub(crate) fn save_default_at(destination: &Path, directory: &Path) -> Result<()
 }
 
 impl LauncherEnvironment for NativeEnvironment {
+    fn plugins_root(&self) -> Option<PathBuf> {
+        self.settings
+            .as_ref()
+            .ok()
+            .and_then(|path| path.parent())
+            .map(|directory| directory.join("plugins"))
+    }
+
     #[cfg(target_os = "windows")]
     fn uid_database_path(&self) -> Option<Result<PathBuf, String>> {
         Some(self.database_path())

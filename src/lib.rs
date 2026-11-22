@@ -23,6 +23,7 @@ mod growth;
 mod inventory;
 pub mod launcher;
 mod native_environment;
+pub mod plugins;
 pub mod profile;
 #[cfg(target_os = "windows")]
 mod scanner;

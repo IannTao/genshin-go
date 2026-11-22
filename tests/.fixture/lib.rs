@@ -52,6 +52,7 @@ struct Environment {
     fail_save: Signal<bool>,
     fail_authorization_save: Signal<bool>,
     fail_launch: Signal<bool>,
+    fail_plugin_catalog: Signal<bool>,
     launched: Signal<String>,
     install_target: Rc<RefCell<Option<PathBuf>>>,
     install_progress: Rc<Cell<u64>>,
@@ -289,6 +290,17 @@ impl LauncherEnvironment for Environment {
     fn pending_install(&self) -> Result<Option<PathBuf>, String> {
         Ok(self.install_target.borrow().clone())
     }
+    fn load_plugin_catalog(
+        &self,
+    ) -> Result<nsh_app_genshin_go::plugins::PluginCatalog, String> {
+        if self.fail_plugin_catalog.get_untracked() {
+            return Err("精选插件目录清单已损坏".into());
+        }
+        nsh_app_genshin_go::plugins::bundled_catalog()
+    }
+    fn plugins_root(&self) -> Option<PathBuf> {
+        Some(PathBuf::from(r"C:\Genshin-Go-Fixture\plugins"))
+    }
     fn install_game(&self, parent: Option<PathBuf>, control: InstallControl) -> InstallOperation {
         if self
             .previous_install
@@ -365,6 +377,7 @@ pub fn Fixture() -> impl IntoElement {
         fail_save: signal(false),
         fail_authorization_save: signal(false),
         fail_launch: signal(false),
+        fail_plugin_catalog: signal(false),
         launched: signal(String::new()),
         install_target: Rc::default(),
         install_progress: Rc::default(),
@@ -384,6 +397,7 @@ pub fn Fixture() -> impl IntoElement {
     let fail_save = environment.fail_save;
     let fail_authorization_save = environment.fail_authorization_save;
     let fail_launch = environment.fail_launch;
+    let fail_plugin_catalog = environment.fail_plugin_catalog;
     let launched = environment.launched;
     let generation = signal(0_u32);
     #[cfg(target_os = "windows")]
@@ -608,6 +622,16 @@ pub fn Fixture() -> impl IntoElement {
             view()
                 .on_press(move || fail_launch.set(true))
                 .child(text("模拟系统启动失败")),
+        )
+        .child(
+            view()
+                .on_press(move || fail_plugin_catalog.set(true))
+                .child(text("模拟插件目录加载失败")),
+        )
+        .child(
+            view()
+                .on_press(move || fail_plugin_catalog.set(false))
+                .child(text("恢复插件目录加载")),
         )
         )
         .child(text(move || launched.get()))

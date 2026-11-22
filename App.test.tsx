@@ -784,3 +784,19 @@ windowsTest("previews and imports UIAF into an explicitly selected UID", async (
   await app.press("标记完成：千嶂万仞（80002）");
   expect(app.texts()).toContain("千嶂万仞 · 成就 80002 · 已完成 · 进度 30");
 });
+
+windowsTest("browses the curated plugin catalog from the Extensions page", async () => {
+  const app = await open(".", { width: 1024, height: 900 });
+  await app.press("扩展");
+  const texts = app.texts();
+  expect(texts).toContain("本项目维护的精选插件目录，仅展示已核实条目，不开放任意第三方商店源。");
+  expect(texts).toContain("精选目录（共 1 项）");
+  expect(texts).toContain("条目详情：FufuLauncher.UnlockerIsland");
+  expect(texts).toContain("类型：游戏注入模块");
+  expect(texts).toContain("版本：1830f9d7（2026-11-18 固定提交）");
+  expect(texts).toContain("来源：https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland");
+  expect(texts.some(line => line.startsWith("安装位置：") && line.endsWith("fufu-unlocker-island"))).toBe(true);
+  expect(texts.some(line => line.startsWith("权限与风险：") && line.includes("管理员权限"))).toBe(true);
+  expect(texts.some(line => line.startsWith("兼容格式：") && line.includes("Launcher_2.exe"))).toBe(true);
+  expect(texts.some(line => line.startsWith("许可证：") && line.includes("AGPL-3.0"))).toBe(true);
+});

@@ -837,3 +837,25 @@ test("rejects an invalid manual directory without replacing the saved default", 
   expect(app.texts()).toContain("无法选择目录：不是国服官服游戏目录");
   expect(app.texts()).toContain("默认目录：C:/原神");
 });
+
+test("browses the curated plugin catalog and reports load failures clearly", async () => {
+  const app = await open(".", { width: 1040, height: 800 });
+  await app.press("扩展");
+  expect(app.texts()).toContain("精选目录（共 1 项）");
+  expect(app.texts()).toContain("条目详情：FufuLauncher.UnlockerIsland");
+  expect(app.texts()).toContain("类型：游戏注入模块");
+  expect(app.texts()).toContain("版本：1830f9d7（2026-11-18 固定提交）");
+  expect(app.texts()).toContain("来源：https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland");
+  expect(app.texts().map(text => text.replaceAll("\\", "/")))
+    .toContain("安装位置：C:/Genshin-Go-Fixture/plugins/fufu-unlocker-island");
+
+  await app.press("模拟插件目录加载失败");
+  await app.press("重新加载目录");
+  expect(app.texts()).toContain("目录加载失败：精选插件目录清单已损坏");
+  expect(app.texts()).not.toContain("条目详情：FufuLauncher.UnlockerIsland");
+
+  await app.press("恢复插件目录加载");
+  await app.press("重新加载目录");
+  expect(app.texts()).toContain("条目详情：FufuLauncher.UnlockerIsland");
+  expect(app.texts()).not.toContain("目录加载失败：精选插件目录清单已损坏");
+});

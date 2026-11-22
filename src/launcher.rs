@@ -144,6 +144,14 @@ pub trait LauncherEnvironment {
     fn install_game(&self, _parent: Option<PathBuf>, _control: InstallControl) -> InstallOperation {
         Box::pin(async { Err("本期仅支持 Windows 下载游戏".into()) })
     }
+    /// Loads the curated plugin catalog for the Extensions page.
+    fn load_plugin_catalog(&self) -> Result<crate::plugins::PluginCatalog, String> {
+        crate::plugins::bundled_catalog()
+    }
+    /// Resolves the root directory where managed plugins are installed.
+    fn plugins_root(&self) -> Option<PathBuf> {
+        None
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -277,15 +285,17 @@ enum Page {
     Community,
     Profile,
     Achievements,
+    Extensions,
 }
 
 impl Page {
-    const ALL: [(Self, &'static str); 5] = [
+    const ALL: [(Self, &'static str); 6] = [
         (Self::Home, "首页"),
         (Self::Game, "游戏管理"),
         (Self::Community, "米游社"),
         (Self::Profile, "角色资料"),
         (Self::Achievements, "成就"),
+        (Self::Extensions, "扩展"),
     ];
 }
 
@@ -337,6 +347,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     );
     #[cfg(not(target_os = "windows"))]
     let (scanner_settings, roster) = (None::<View>, None::<View>);
+    let extensions = crate::plugins::section(environment.clone());
     let uid_spaces = crate::profile::spaces(environment, profile, history_revision, roster);
     view()
         .flex_1()
@@ -388,7 +399,8 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                         .child(profile_error.map(text))
                         .child(uid_spaces),
                 ))
-                .child(achievements),
+                .child(achievements)
+                .child(panel(page, Page::Extensions, extensions)),
         )
 }
 
@@ -405,13 +417,13 @@ fn sidebar(page: Signal<Page>, download_status: View, has_achievements: bool) ->
         })
         .flex_shrink(0.0)
         .p(|| px(if narrow_window() { 8.0 } else { 12.0 }))
-        .gap_2()
+        .gap_1()
         .bg(rgb(SIDEBAR_BACKGROUND))
         .text_color(rgb(0x00f4_f3de))
         .child(
             text("Genshin-Go")
                 .text_size(|| px(if narrow_window() { 12.0 } else { 14.0 }))
-                .mb_3()
+                .mb_2()
                 .font_weight(FontWeight::BOLD)
                 .style_when(compact_window, Styled::hidden),
         )
@@ -421,6 +433,7 @@ fn sidebar(page: Signal<Page>, download_status: View, has_achievements: bool) ->
                 .filter(|(target, _)| *target != Page::Achievements || has_achievements)
                 .map(|(target, label)| {
                     action_button(label, move || page.set(target))
+                        .py_1()
                         .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
                         .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
                         .accessibility_state(move || AccessibilityState {
