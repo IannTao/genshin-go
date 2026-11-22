@@ -54,6 +54,7 @@ pub(crate) fn spaces(
         view()
             .gap_2()
             .child(crate::inventory::section(
+                environment.clone(),
                 path.clone(),
                 profile,
                 history_revision,

@@ -198,3 +198,72 @@ windowsTest("launches normally when continuous sync is disabled or capture fails
   expect(app.texts().join("\n")).toContain("启动失败：目录已失效");
   expect(app.texts()).toContain("游戏启动次数：4");
 }, 60000);
+
+windowsTest("syncs growth materials from MiYouShe for the authorized UID while preserving equipment", async () => {
+  const { app } = await configuredScanner();
+  await app.press("角色资料");
+  await app.type("game-uid", "123456789");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  expect(app.texts()).not.toContain("从米游社同步材料");
+  expect(app.texts()).toContain("使用当前已授权米哈游账号绑定的 UID 时，可直接从米游社同步材料。");
+
+  await app.type("inventory-file", "../../tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await app.press("读取 GOOD 文件");
+  await app.type("inventory-captured-at", "+08:00");
+  await app.press("预览背包导入至 UID 123456789");
+  await app.press("备份并确认完整导入");
+
+  await app.press("米游社");
+  await app.press("扫码添加米哈游账号");
+  await app.press("模拟扫码确认");
+  await app.waitFor("米游社授权已保存");
+
+  await app.press("角色资料");
+  await app.press("从米游社同步材料");
+  await app.waitUntil(() => app.texts().some(line => line.startsWith("已从米游社同步 UID 123456789 的 2 种材料。同步前备份：")));
+  await app.press("材料");
+  expect(app.texts()).toContain("来源：MiYouShe-Calculator · GOOD v3");
+  expect(app.texts()).toContain("SmallLampGrass · 数量 2");
+  expect(app.texts()).toContain("Mora · 数量 250000");
+  await app.press("武器");
+  expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
+
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-current-level");
+  await app.type("growth-current-level", "20");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "20");
+  await app.clear("growth-target-phase");
+  await app.type("growth-target-phase", "1");
+  await app.press("使用导入库存");
+  expect(app.texts()).toContain("摩拉 · 需求 20000 · 导入库存 250000 · 缺口 0");
+  expect(app.texts()).toContain("小灯草 · 需求 3 · 导入库存 2 · 缺口 1");
+
+  await app.press("模拟米游社材料同步失败");
+  await app.press("从米游社同步材料");
+  await app.waitFor("米游社材料同步失败：米游社授权已失效，请重新扫码");
+  await app.press("材料");
+  expect(app.texts()).toContain("SmallLampGrass · 数量 2");
+
+  await app.press("模拟米游社材料更新");
+  await app.press("从米游社同步材料");
+  await app.waitUntil(() => app.texts().some(line => line.startsWith("已从米游社同步 UID 123456789 的 2 种材料。同步前备份：")));
+  await app.press("材料");
+  expect(app.texts()).toContain("SmallLampGrass · 数量 15");
+
+  await app.type("game-uid", "987654321");
+  await app.press("创建 UID 数据空间");
+  expect(app.texts()).not.toContain("从米游社同步材料");
+
+  await app.press("重新打开启动器");
+  await app.press("角色资料");
+  await app.press("切换至 UID：123456789");
+  await app.press("背包仓库");
+  await app.press("材料");
+  expect(app.texts()).toContain("SmallLampGrass · 数量 15");
+  await app.press("武器");
+  expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
+}, 90000);

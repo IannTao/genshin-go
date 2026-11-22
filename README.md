@@ -119,6 +119,14 @@ launcher backs up the UID's current snapshots for the supplied categories to
 selected through the GOOD importer.
 The first import records that the UID had no inventory yet.
 
+When the selected UID matches the authorized 米哈游账号, choose **从米游社同步材料**
+in **背包仓库** to fetch character and weapon cultivation materials from the official
+米游社 calculator (`e20200928calculate/v3/batch_compute`). The launcher backs up the
+previous material snapshot, saves the synchronized quantities as a materials-only
+snapshot (`MiYouShe-Calculator`), preserves existing weapon and artifact snapshots,
+and makes the updated materials immediately available to **使用导入库存** in the growth
+planners.
+
 ## Windows character growth plans
 
 Open **角色资料 → 角色养成计划**, choose a UID, and search for a character. Enter

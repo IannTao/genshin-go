@@ -1,14 +1,19 @@
 //! Locally imported, read-only inventory snapshots scoped to game UIDs.
 mod archive;
 pub(crate) mod backup;
+mod mihoyo;
 mod store;
 mod ui;
 
-use crate::profile::Profile;
+use crate::{
+    launcher::LauncherEnvironment,
+    profile::{Profile, VerifiedAccount},
+};
 use nsh_core::prelude::*;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 const WEAPONS: u8 = 1;
@@ -37,11 +42,20 @@ pub(crate) fn latest_materials(path: &Path, uid: &str) -> Result<Option<Material
     store::latest_materials(path, uid)
 }
 
+/// Fetches growth material counts for the verified account via `MiYouShe`.
+pub(crate) async fn sync_mihoyo_materials(
+    path: PathBuf,
+    account: VerifiedAccount,
+) -> Result<BTreeMap<String, u32>, String> {
+    mihoyo::fetch_materials(path, account).await
+}
+
 /// Renders the inventory warehouse within the UID data spaces page.
 pub(crate) fn section(
+    environment: Rc<dyn LauncherEnvironment>,
     path: Result<PathBuf, String>,
     profile: Signal<Profile>,
     revision: Signal<u64>,
 ) -> View {
-    ui::section(path, profile, revision)
+    ui::section(environment, path, profile, revision)
 }

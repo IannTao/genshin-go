@@ -148,7 +148,8 @@ pub(super) struct CaptureTime {
 }
 
 impl CaptureTime {
-    fn from_millis(millis: i64) -> Result<Self, String> {
+    /// Converts Unix milliseconds while preserving millisecond precision.
+    pub(super) fn from_millis(millis: i64) -> Result<Self, String> {
         let time = DateTime::from_timestamp_millis(millis)
             .ok_or("GOOD 文件中的采集时间无效")?
             .to_rfc3339_opts(SecondsFormat::Millis, true);

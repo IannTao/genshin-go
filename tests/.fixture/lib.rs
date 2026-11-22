@@ -35,6 +35,8 @@ struct Environment {
     scanner: Rc<RefCell<Option<scanner::Scanner>>>,
     #[cfg(target_os = "windows")]
     game_running: Signal<bool>,
+    #[cfg(target_os = "windows")]
+    material_sync_mode: Signal<u8>,
     launches: Signal<u32>,
     profile: RefCell<Profile>,
     revision: Cell<u64>,
@@ -68,6 +70,30 @@ impl LauncherEnvironment for Environment {
         self.scanner.borrow().as_ref()?.local.uid_database_path()
     }
     #[cfg(target_os = "windows")]
+    fn sync_mihoyo_materials(
+        &self,
+        account: VerifiedAccount,
+    ) -> AccountOperation<std::collections::BTreeMap<String, u32>> {
+        let mode = self.material_sync_mode.get_untracked();
+        let current = self.load_profile().ok().and_then(|profile| profile.account);
+        Box::pin(async move {
+            if current.as_ref() != Some(&account) {
+                return Err("米游社授权已变化或移除，请先重新检查授权".into());
+            }
+            match mode {
+                0 => Ok(std::collections::BTreeMap::from([
+                    ("SmallLampGrass".to_owned(), 2),
+                    ("Mora".to_owned(), 250_000),
+                ])),
+                1 => Ok(std::collections::BTreeMap::from([
+                    ("SmallLampGrass".to_owned(), 15),
+                    ("Mora".to_owned(), 300_000),
+                ])),
+                _ => Err("米游社授权已失效，请重新扫码".into()),
+            }
+        })
+    }
+    #[cfg(target_os = "windows")]
     fn launch_with_process(
         &self,
         directory: &Path,
@@ -93,7 +119,7 @@ impl LauncherEnvironment for Environment {
         day: u64,
         allow_submission: bool,
     ) -> Operation {
-        let current = self.profile.borrow().account.clone();
+        let current = self.load_profile().ok().and_then(|profile| profile.account);
         let current_day = self.sign_in_day.get_untracked();
         let result = self.sign_in_reply.get_untracked();
         self.sign_in_attempts.update(|count| *count += 1);
@@ -171,6 +197,12 @@ impl LauncherEnvironment for Environment {
         uid: &str,
         expected: Option<&VerifiedAccount>,
     ) -> Result<Profile, String> {
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = self.scanner.borrow().as_ref() {
+            return scanner
+                .local
+                .save_authorization(authorization, uid, expected);
+        }
         if self.profile.borrow().account.as_ref() != expected {
             return Err("本机授权已在另一启动器中更改".into());
         }
@@ -194,6 +226,10 @@ impl LauncherEnvironment for Environment {
         Ok(profile.clone())
     }
     fn remove_authorization(&self, account: &VerifiedAccount) -> Result<Profile, String> {
+        #[cfg(target_os = "windows")]
+        if let Some(scanner) = self.scanner.borrow().as_ref() {
+            return scanner.local.remove_authorization(account);
+        }
         let mut profile = self.profile.borrow_mut();
         if profile.account.as_ref() != Some(account) {
             return Err("授权已更改".into());
@@ -357,6 +393,8 @@ pub fn Fixture() -> impl IntoElement {
         scanner: Rc::default(),
         #[cfg(target_os = "windows")]
         game_running: signal(false),
+        #[cfg(target_os = "windows")]
+        material_sync_mode: signal(0),
         launches: signal(0),
         profile: RefCell::new(Profile::default()),
         revision: Cell::new(0),
@@ -407,6 +445,8 @@ pub fn Fixture() -> impl IntoElement {
     let fail_launch = environment.fail_launch;
     let fail_plugin_catalog = environment.fail_plugin_catalog;
     let launched = environment.launched;
+    #[cfg(target_os = "windows")]
+    let material_sync_mode = environment.material_sync_mode;
     let generation = signal(0_u32);
     #[cfg(target_os = "windows")]
     let scanner = Some(scanner::controls(
@@ -641,6 +681,30 @@ pub fn Fixture() -> impl IntoElement {
                 .on_press(move || fail_plugin_catalog.set(false))
                 .child(text("恢复插件目录加载")),
         )
+        .child({
+            #[cfg(target_os = "windows")]
+            {
+                Some(
+                    view()
+                        .flex_row()
+                        .gap_2()
+                        .child(
+                            view()
+                                .on_press(move || material_sync_mode.set(1))
+                                .child(text("模拟米游社材料更新")),
+                        )
+                        .child(
+                            view()
+                                .on_press(move || material_sync_mode.set(2))
+                                .child(text("模拟米游社材料同步失败")),
+                        ),
+                )
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                None::<View>
+            }
+        })
         )
         .child(text(move || launched.get()))
         .child(dynamic(move || {

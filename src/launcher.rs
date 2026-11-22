@@ -89,6 +89,14 @@ pub trait LauncherEnvironment {
     fn uid_database_path(&self) -> Option<Result<PathBuf, String>> {
         None
     }
+    /// Synchronizes growth material counts for the verified account via `MiYouShe`.
+    #[cfg(target_os = "windows")]
+    fn sync_mihoyo_materials(
+        &self,
+        _account: crate::profile::VerifiedAccount,
+    ) -> crate::accounts::AccountOperation<std::collections::BTreeMap<String, u32>> {
+        Box::pin(async { Err("本期仅支持 Windows 米游社材料同步".into()) })
+    }
     /// Resolves the unique game UID associated with the scanned authorization.
     fn verify_uid(
         &self,

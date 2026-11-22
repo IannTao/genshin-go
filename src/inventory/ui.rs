@@ -3,7 +3,11 @@ use super::{
     archive::{Archive, CaptureTime, Inventory},
     store::{self, Header, ImportEffect},
 };
-use crate::{archive_json::file_button, launcher::button, profile::Profile};
+use crate::{
+    archive_json::file_button,
+    launcher::{LauncherEnvironment, button},
+    profile::{Profile, VerifiedAccount},
+};
 use nsh_base::theme;
 use nsh_core::{element::input, prelude::*};
 use std::{path::PathBuf, rc::Rc};
@@ -12,6 +16,7 @@ const PAGE_SIZE: usize = 30;
 
 /// Adds the expandable inventory browser and import controls to the UID page.
 pub(super) fn section(
+    environment: Rc<dyn LauncherEnvironment>,
     database: Result<PathBuf, String>,
     profile: Signal<Profile>,
     revision: Signal<u64>,
@@ -24,13 +29,23 @@ pub(super) fn section(
         }))
         .child(dynamic(move || {
             expanded.get().then(|| match &database {
-                Ok(path) => warehouse(Rc::new(path.clone()), profile, revision),
+                Ok(path) => warehouse(
+                    environment.clone(),
+                    Rc::new(path.clone()),
+                    profile,
+                    revision,
+                ),
                 Err(error) => view().child(text(error.clone())),
             })
         }))
 }
 
-fn warehouse(database: Rc<PathBuf>, profile: Signal<Profile>, revision: Signal<u64>) -> View {
+fn warehouse(
+    environment: Rc<dyn LauncherEnvironment>,
+    database: Rc<PathBuf>,
+    profile: Signal<Profile>,
+    revision: Signal<u64>,
+) -> View {
     let controls = ImportControls {
         database: database.clone(),
         path: signal(String::new()),
@@ -43,12 +58,154 @@ fn warehouse(database: Rc<PathBuf>, profile: Signal<Profile>, revision: Signal<u
     };
     view()
         .gap_2()
-        .child(browser(database, profile, revision))
+        .child(browser(database.clone(), profile, revision))
+        .child(mihoyo_sync(environment, database, profile, revision))
         .child(text("导入 GOOD 背包快照").font_weight(FontWeight::BOLD))
         .child(controls.file_input())
         .child(controls.target_options(profile))
         .child(controls.confirmation())
         .child(text(move || controls.message.get()))
+}
+
+fn mihoyo_sync(
+    environment: Rc<dyn LauncherEnvironment>,
+    database: Rc<PathBuf>,
+    profile: Signal<Profile>,
+    revision: Signal<u64>,
+) -> View {
+    let syncing = signal(false);
+    let message: Signal<Option<(String, String)>> = signal(None);
+    let owner = Owner::current();
+    view()
+        .gap_2()
+        .child(text("米游社材料同步").font_weight(FontWeight::BOLD))
+        .child(dynamic(move || {
+            let state = profile.get();
+            let matching = state
+                .active_uid
+                .as_deref()
+                .zip(state.account.as_ref())
+                .filter(|(uid, account)| *uid == account.uid.as_str())
+                .map(|(_, account)| account.clone());
+            let Some(account) = matching else {
+                return view().child(text(
+                    "使用当前已授权米哈游账号绑定的 UID 时，可直接从米游社同步材料。",
+                ));
+            };
+            let busy = syncing.get();
+            let environment = environment.clone();
+            let database = database.clone();
+            let status = message
+                .get()
+                .filter(|(uid, _)| *uid == account.uid)
+                .map(|(_, text)| text)
+                .unwrap_or_default();
+            view()
+                .gap_2()
+                .child(text(
+                    "通过当前米游社授权的养成计算器同步角色与武器培养材料，自动备份并保留已有武器与圣遗物记录。",
+                ))
+                .child(if busy {
+                    text("正在从米游社同步材料…").into_element()
+                } else {
+                    button("从米游社同步材料", move || {
+                        if syncing.get_untracked() {
+                            return;
+                        }
+                        let account = account.clone();
+                        let environment = environment.clone();
+                        let database = database.clone();
+                        owner.run(move || {
+                            run_mihoyo_sync(
+                                environment.as_ref(),
+                                database,
+                                account,
+                                profile,
+                                revision,
+                                syncing,
+                                message,
+                            );
+                        });
+                    })
+                    .into_element()
+                })
+                .child((!status.is_empty()).then(|| text(status)))
+        }))
+}
+
+fn run_mihoyo_sync(
+    environment: &dyn LauncherEnvironment,
+    database: Rc<PathBuf>,
+    account: VerifiedAccount,
+    profile: Signal<Profile>,
+    revision: Signal<u64>,
+    syncing: Signal<bool>,
+    message: Signal<Option<(String, String)>>,
+) {
+    let starting_revision = revision.get_untracked();
+    let uid = account.uid.clone();
+    syncing.set(true);
+    message.set(None);
+    let operation = environment.sync_mihoyo_materials(account.clone());
+    spawn(async move {
+        let result = operation.await;
+        syncing.set(false);
+        if profile.get_untracked().account.as_ref() != Some(&account) {
+            message.set(Some((
+                uid,
+                "米游社授权已变化，本次材料同步结果未写入。".into(),
+            )));
+            return;
+        }
+        if revision.get_untracked() != starting_revision {
+            message.set(Some((
+                uid,
+                "本机历史已变化，本次材料同步结果未写入，请重新同步。".into(),
+            )));
+            return;
+        }
+        match result {
+            Ok(materials) => {
+                let count = materials.len();
+                let saved = CaptureTime::from_millis(chrono::Utc::now().timestamp_millis())
+                    .and_then(|captured| {
+                        store::save_synced_materials(
+                            &database,
+                            &account,
+                            &captured,
+                            "MiYouShe-Calculator",
+                            materials,
+                        )
+                    });
+                match saved {
+                    Ok((effect, backups)) => {
+                        revision.update(|value| *value += 1);
+                        let paths = backups
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join("、");
+                        let note = if effect == ImportEffect::Historical {
+                            "（已保存为历史快照，本机已有采集时间更晚的材料记录）"
+                        } else {
+                            ""
+                        };
+                        message.set(Some((
+                            uid,
+                            format!(
+                                "已从米游社同步 UID {} 的 {count} 种材料{note}。同步前备份：{paths}",
+                                account.uid
+                            ),
+                        )));
+                    }
+                    Err(error) => {
+                        message.set(Some((uid, format!("保存米游社材料失败：{error}"))));
+                    }
+                }
+            }
+            Err(error) => message.set(Some((uid, format!("米游社材料同步失败：{error}")))),
+        }
+    });
 }
 
 #[derive(Clone)]

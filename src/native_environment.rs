@@ -196,6 +196,15 @@ impl LauncherEnvironment for NativeEnvironment {
     }
 
     #[cfg(target_os = "windows")]
+    fn sync_mihoyo_materials(
+        &self,
+        account: crate::profile::VerifiedAccount,
+    ) -> crate::accounts::AccountOperation<std::collections::BTreeMap<String, u32>> {
+        let path = self.database_path();
+        Box::pin(async move { crate::inventory::sync_mihoyo_materials(path?, account).await })
+    }
+
+    #[cfg(target_os = "windows")]
     fn community_clock(&self) -> Option<crate::community_sign_in::Clock> {
         crate::community_service::clock()
     }

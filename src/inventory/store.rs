@@ -5,6 +5,7 @@ use super::{
 use crate::{
     account_store::{database_error, open},
     native_environment::atomic_write,
+    profile::VerifiedAccount,
 };
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::{
@@ -47,7 +48,7 @@ pub(super) struct Header {
 }
 
 /// Describes the visible effect of confirming a reviewed import.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ImportEffect {
     /// Makes the incoming snapshot the default inventory.
     Latest,
@@ -243,6 +244,88 @@ pub(super) fn import(
     if &actual != preview {
         return Err("背包快照已变化，请重新预览".into());
     }
+    let backups = commit_snapshot(
+        path,
+        &write,
+        archive,
+        captured_at,
+        &actual,
+        "导入前备份失败",
+    )?;
+    write.commit().map_err(|error| database_error(&error))?;
+    Ok(backups)
+}
+
+/// Backs up the latest material snapshot and saves materials synchronized from `MiYouShe`.
+pub(super) fn save_synced_materials(
+    path: &Path,
+    account: &VerifiedAccount,
+    captured_at: &CaptureTime,
+    source: &str,
+    materials: BTreeMap<String, u32>,
+) -> Result<(ImportEffect, Vec<PathBuf>), String> {
+    if materials.is_empty() {
+        return Err("米游社未返回有效的培养材料数量".into());
+    }
+    let inventory = Inventory {
+        weapons: Vec::new(),
+        artifacts: Vec::new(),
+        materials,
+    };
+    inventory.validate()?;
+    let archive = Archive {
+        version: 3,
+        source: source.to_owned(),
+        uid: Some(account.uid.clone()),
+        captured_at: Some(captured_at.original.clone()),
+        inventory,
+        coverage: super::MATERIALS,
+        omitted_categories: Vec::new(),
+    };
+    let mut db = open(path)?;
+    let write = db
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| database_error(&error))?;
+    let authorized: bool = write
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM account_authorization
+                WHERE singleton = 1 AND account_id = ?1 AND uid = ?2 AND revision = ?3
+             )",
+            params![account.account_id, account.uid, account.revision],
+            |row| row.get(0),
+        )
+        .map_err(|error| database_error(&error))?;
+    if !authorized {
+        return Err("米游社授权已变化或移除，本次材料同步结果未写入".into());
+    }
+    let actual = plan(
+        &write,
+        &account.uid,
+        &archive,
+        captured_at,
+        super::MATERIALS,
+    )?;
+    let backups = commit_snapshot(
+        path,
+        &write,
+        &archive,
+        captured_at,
+        &actual,
+        "同步前备份失败",
+    )?;
+    write.commit().map_err(|error| database_error(&error))?;
+    Ok((actual.effect, backups))
+}
+
+fn commit_snapshot(
+    path: &Path,
+    write: &Connection,
+    archive: &Archive,
+    captured_at: &CaptureTime,
+    actual: &Preview,
+    backup_error_prefix: &str,
+) -> Result<Vec<PathBuf>, String> {
     if actual.effect == ImportEffect::Duplicate {
         return Err("这份背包快照已保存".into());
     }
@@ -255,9 +338,9 @@ pub(super) fn import(
         actual.coverage,
     )?;
     let backups =
-        backup(path, &write, &actual).map_err(|error| format!("导入前备份失败：{error}"))?;
+        backup(path, write, actual).map_err(|error| format!("{backup_error_prefix}：{error}"))?;
     insert(
-        &write,
+        write,
         &actual.uid,
         captured_at,
         archive.version,
@@ -265,7 +348,6 @@ pub(super) fn import(
         &archive.inventory,
         actual.coverage,
     )?;
-    write.commit().map_err(|error| database_error(&error))?;
     Ok(backups)
 }
 
@@ -364,4 +446,82 @@ fn backup(path: &Path, db: &Connection, preview: &Preview) -> Result<Vec<PathBuf
         written.push(file);
     }
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{account_store, accounts::Authorization};
+    use std::fs;
+
+    #[test]
+    fn synced_materials_check_authorization_reject_empty_and_flag_historical_writes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = std::env::temp_dir().join(format!(
+            "genshin-go-inv-sync-{}-{}",
+            std::process::id(),
+            windows::core::GUID::new()?.data1
+        ));
+        fs::create_dir_all(&dir)?;
+        let path = dir.join("launcher.sqlite3");
+        let saved = account_store::save(
+            &path,
+            Authorization {
+                account_id: "10001".into(),
+                cookie_header: "account_id=10001; cookie_token=t; ltuid=10001; ltoken=l".into(),
+                community_cookie: None,
+            },
+            "123456789",
+            None,
+        )?;
+        let account = saved.account.ok_or("missing saved account")?;
+
+        let t2 = CaptureTime::parse("2026-11-22T12:00:00Z")?;
+        assert!(
+            save_synced_materials(&path, &account, &t2, "MiYouShe-Calculator", BTreeMap::new())
+                .is_err()
+        );
+
+        let (effect, backups) = save_synced_materials(
+            &path,
+            &account,
+            &t2,
+            "MiYouShe-Calculator",
+            BTreeMap::from([("Mora".into(), 500)]),
+        )?;
+        assert_eq!(effect, ImportEffect::Latest);
+        assert_eq!(backups.len(), 1);
+        assert!(backups[0].is_file());
+
+        let t1 = CaptureTime::parse("2026-11-21T12:00:00Z")?;
+        let (older_effect, _) = save_synced_materials(
+            &path,
+            &account,
+            &t1,
+            "MiYouShe-Calculator",
+            BTreeMap::from([("Mora".into(), 100)]),
+        )?;
+        assert_eq!(older_effect, ImportEffect::Historical);
+        let latest = latest_materials(&path, &account.uid)?.ok_or("missing latest materials")?;
+        assert_eq!(latest.quantities.get("Mora"), Some(&500));
+
+        let stale = VerifiedAccount {
+            revision: "stale-revision".into(),
+            ..account
+        };
+        let t3 = CaptureTime::parse("2026-11-23T12:00:00Z")?;
+        assert!(
+            save_synced_materials(
+                &path,
+                &stale,
+                &t3,
+                "MiYouShe-Calculator",
+                BTreeMap::from([("Mora".into(), 900)]),
+            )
+            .is_err()
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }
