@@ -221,15 +221,14 @@ impl Controls {
     }
 }
 
-/// Renders backup controls and their preview in the UID spaces page.
+/// Renders backup controls and their preview in System Settings.
 pub(super) fn section(
     path: Result<PathBuf, String>,
     profile: Signal<Profile>,
     revision: Signal<u64>,
     growth_revision: Signal<u64>,
 ) -> View {
-    let open = signal(false);
-    let content = match path {
+    match path {
         Ok(database) => Controls {
             database: Rc::new(database),
             file: signal(String::new()),
@@ -242,15 +241,5 @@ pub(super) fn section(
         }
         .render(),
         Err(error) => view().child(text(error)),
-    };
-    view()
-        .gap_2()
-        .child(button("备份与恢复", move || {
-            open.update(|value| *value = !*value);
-        }))
-        .child(
-            view()
-                .style_when(move || !open.get(), Styled::hidden)
-                .child(content),
-        )
+    }
 }

@@ -20,6 +20,93 @@ windowsTest("navigates the nine workbench pages from the sidebar", async () => {
   }
 });
 
+windowsTest("syncs light/dark theme and sidebar state between the topbar and Settings Appearance", async () => {
+  const app = await open(".", { width: 1040, height: 720, platform: "windows", colorScheme: "light" });
+  expect(app.shows("id:launcher-topbar >> id:launcher-sidebar-toggle")).toBe(true);
+  expect(app.shows("id:launcher-topbar >> text:Genshin Go")).toBe(true);
+  expect(app.shows("id:launcher-page-title >> text:首页")).toBe(true);
+  expect(app.shows("id:launcher-topbar >> label:收起侧栏")).toBe(true);
+  expect(app.shows("id:launcher-topbar >> label:切换深色模式")).toBe(true);
+
+  const lightTitleColor = app.spanStyle("id:launcher-page-title >> text:首页").color;
+
+  await app.setColorScheme("dark");
+  expect(app.shows("id:launcher-topbar >> label:切换浅色模式")).toBe(true);
+  await app.setColorScheme("light");
+  expect(app.shows("id:launcher-topbar >> label:切换深色模式")).toBe(true);
+
+  await app.press("id:launcher-theme-toggle");
+  expect(app.shows("id:launcher-topbar >> label:切换浅色模式")).toBe(true);
+  const darkTitleColor = app.spanStyle("id:launcher-page-title >> text:首页").color;
+  expect(darkTitleColor).not.toBe(lightTitleColor);
+
+  await app.press("id:launcher-sidebar >> text:系统设置");
+  expect(app.shows("id:launcher-page-title >> text:系统设置")).toBe(true);
+  expect(app.spanStyle("id:theme-option-dark >> text:深色").fontWeight).toBe(700);
+  expect(app.spanStyle("id:theme-option-light >> text:浅色").fontWeight).toBe(400);
+  expect(app.spanStyle("id:sidebar-option-expanded >> text:展开").fontWeight).toBe(700);
+  expect(app.spanStyle("id:sidebar-option-collapsed >> text:仅图标").fontWeight).toBe(400);
+
+  await app.press("id:theme-option-light");
+  expect(app.shows("id:launcher-topbar >> label:切换深色模式")).toBe(true);
+  expect(app.spanStyle("id:theme-option-light >> text:浅色").fontWeight).toBe(700);
+  expect(app.spanStyle("id:theme-option-dark >> text:深色").fontWeight).toBe(400);
+  expect(app.spanStyle("id:launcher-page-title >> text:系统设置").color).toBe(lightTitleColor);
+
+  await app.press("id:launcher-sidebar-toggle");
+  expect(app.shows("id:launcher-topbar >> label:展开侧栏")).toBe(true);
+  expect(app.spanStyle("id:sidebar-option-collapsed >> text:仅图标").fontWeight).toBe(700);
+  expect(app.spanStyle("id:sidebar-option-expanded >> text:展开").fontWeight).toBe(400);
+
+  await app.press("id:sidebar-option-expanded");
+  expect(app.shows("id:launcher-topbar >> label:收起侧栏")).toBe(true);
+  expect(app.spanStyle("id:sidebar-option-expanded >> text:展开").fontWeight).toBe(700);
+  expect(app.spanStyle("id:sidebar-option-collapsed >> text:仅图标").fontWeight).toBe(400);
+});
+
+windowsTest("preserves collapsed sidebar tooltips, active highlight, bottom Settings, and theme across pages", async () => {
+  const app = await open(".", { width: 1040, height: 720, platform: "windows", colorScheme: "light", clock: {} });
+  const lightTitleColor = app.spanStyle("id:launcher-page-title >> text:首页").color;
+
+  await app.setColorScheme("dark");
+  expect(app.shows("id:launcher-topbar >> label:切换浅色模式")).toBe(true);
+  await app.setColorScheme("light");
+  expect(app.shows("id:launcher-topbar >> label:切换深色模式")).toBe(true);
+
+  await app.press("id:launcher-theme-toggle");
+  await app.press("id:launcher-sidebar-toggle");
+  expect(app.shows("id:launcher-topbar >> label:展开侧栏")).toBe(true);
+  expect(app.shows("id:launcher-sidebar >> text:游戏管理")).toBe(false);
+  expect(app.shows("id:launcher-sidebar-bottom >> id:nav-settings")).toBe(true);
+
+  await app.hover("id:nav-game");
+  await app.wait(200);
+  expect(app.texts()).toContain("游戏管理");
+
+  await app.hover("id:nav-settings");
+  await app.wait(200);
+  expect(app.texts()).toContain("系统设置");
+
+  const darkTitleColor = app.spanStyle("id:launcher-page-title >> text:首页").color;
+  expect(darkTitleColor).not.toBe(lightTitleColor);
+
+  for (const [id, title] of [
+    ["nav-wishes", "祈愿分析"],
+    ["nav-inventory", "背包仓库"],
+    ["nav-achievements", "成就管理"],
+    ["nav-settings", "系统设置"],
+  ] as const) {
+    await app.press(`id:${id}`);
+    expect(app.shows(`id:launcher-page-title >> text:${title}`)).toBe(true);
+    expect(app.spanStyle(`id:launcher-page-title >> text:${title}`).color).toBe(darkTitleColor);
+    expect(app.shows("id:launcher-topbar >> label:展开侧栏")).toBe(true);
+    expect(app.shows("id:launcher-topbar >> label:切换浅色模式")).toBe(true);
+  }
+
+  expect(app.spanStyle("id:theme-option-dark >> text:深色").fontWeight).toBe(700);
+  expect(app.spanStyle("id:sidebar-option-collapsed >> text:仅图标").fontWeight).toBe(700);
+});
+
 windowsTest("uses the selected UID's imported stock for character growth", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");

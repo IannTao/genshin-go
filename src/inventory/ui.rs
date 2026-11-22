@@ -677,6 +677,7 @@ fn inventory_rows(
         .child(
             view()
                 .flex_row()
+                .flex_wrap()
                 .gap_2()
                 .child((page > 0).then(|| {
                     button("上一页背包", move || {

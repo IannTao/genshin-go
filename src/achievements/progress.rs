@@ -174,6 +174,7 @@ fn results(
         .child(
             view()
                 .flex_row()
+                .flex_wrap()
                 .gap_2()
                 .child((index > 0).then(|| button("上一页", move || previous(index - 1))))
                 .child(
@@ -210,16 +211,19 @@ fn results(
                     } else {
                         "标记完成"
                     };
-                    view()
+                    let mut row = view()
                         .flex_row()
                         .flex_wrap()
                         .items_center()
                         .gap_2()
-                        .child(text(label))
+                        .child(text(label).min_w(px(0.0)))
                         .child(button(format!("{action}：{name}"), move || {
                             save(id, !completed);
-                        }))
-                        .into_element()
+                        }));
+                    if id == 80_001 {
+                        row = row.test_id("achievement-row-80001");
+                    }
+                    row.into_element()
                 }),
         )
 }

@@ -166,19 +166,17 @@ pub(crate) fn section(environment: Rc<dyn LauncherEnvironment>) -> View {
         .child(text(
             "本项目维护的精选插件目录，仅展示已核实条目，不开放任意第三方商店源。",
         ))
-        .child(
-            view()
-                .flex_row()
-                .gap_2()
-                .child(button("重新加载目录", move || {
-                    let next = load_state(reload_env.as_ref());
-                    if source_input.get_untracked().is_empty() {
-                        source_input.set(initial_source_path(&next));
-                    }
-                    state.set(next);
-                    status_revision.update(|rev| *rev += 1);
-                })),
-        )
+        .child(view().flex_row().flex_wrap().gap_2().child(button(
+            "重新加载目录",
+            move || {
+                let next = load_state(reload_env.as_ref());
+                if source_input.get_untracked().is_empty() {
+                    source_input.set(initial_source_path(&next));
+                }
+                state.set(next);
+                status_revision.update(|rev| *rev += 1);
+            },
+        )))
         .child(dynamic(move || {
             let _ = status_revision.get();
             let root = plugins_root.clone();

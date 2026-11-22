@@ -860,3 +860,34 @@ test("browses the curated plugin catalog and reports load failures clearly", asy
   expect(app.texts()).toContain("条目详情：FufuLauncher.UnlockerIsland");
   expect(app.texts()).not.toContain("目录加载失败：精选插件目录清单已损坏");
 });
+
+test("keeps ordinary launch, full path confirmation, and data pages usable in a narrow window", async () => {
+  const app = await open(".", { width: 520, height: 640, platform: "windows", colorScheme: "light", clock: {} });
+  await app.press("模拟仅发现一处安装");
+  await app.press("重新打开启动器");
+  await app.setViewport(520, 640);
+
+  const longPath = String.raw`D:\Games\原神中文目录\GenshinImpactInstallationWithALongFolderName\Genshin Impact Game`;
+  expect(app.texts()).toContain(longPath);
+  await app.press("确认保存目录");
+  expect(app.texts()).toContain("普通启动");
+  await app.press("普通启动");
+  expect(app.texts()).toContain("已请求启动游戏");
+  expect(app.texts()).toContain(`请求启动：${longPath}`);
+
+  await app.press("id:launcher-theme-toggle");
+  await app.press("id:launcher-sidebar-toggle");
+  expect(app.shows("id:launcher-topbar >> label:展开侧栏")).toBe(true);
+  expect(app.shows("id:launcher-topbar >> label:切换浅色模式")).toBe(true);
+
+  await app.press("id:nav-profile");
+  expect(app.shows("id:launcher-page-title >> text:角色资料")).toBe(true);
+  await app.type("game-uid", "123456789");
+  await app.press("创建 UID 数据空间");
+  expect(app.texts()).toContain("当前游戏 UID：123456789");
+
+  await app.press("id:nav-settings");
+  expect(app.shows("id:launcher-page-title >> text:系统设置")).toBe(true);
+  expect(app.spanStyle("id:theme-option-dark >> text:深色").fontWeight).toBe(700);
+  expect(app.spanStyle("id:sidebar-option-collapsed >> text:仅图标").fontWeight).toBe(700);
+});

@@ -1,9 +1,15 @@
 //! Application boundary shared by the native root and the isolated test host.
 
+mod icons;
+#[cfg(test)]
+mod tests;
+
 use crate::game_install::{InstallControl, InstallOperation, InstallSession};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use nsh_core::element::input;
+use nsh_base::tooltip;
+use nsh_core::element::{ImageSrc, input, svg};
 use nsh_core::prelude::*;
+use nsh_core::{AccessibilityCurrent, Checked};
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -257,12 +263,106 @@ fn set_default(state: Signal<InstallationState>, directory: PathBuf) {
     });
 }
 
-const ACCENT: AdaptiveColor = AdaptiveColor::rgb(0x0021_5b49, 0x0021_5b49);
+const ACCENT: AdaptiveColor = AdaptiveColor::rgb(0x0021_5b49, 0x002f_7d65);
 const PAPER: AdaptiveColor = AdaptiveColor::rgb(0x00f4_f5ef, 0x0017_2420);
+const SURFACE: AdaptiveColor = AdaptiveColor::rgb(0x00f5_f8f7, 0x0012_1d1a);
+const CARD: AdaptiveColor = AdaptiveColor::rgb(0x00ff_fef8, 0x001d_2d28);
+const BORDER: AdaptiveColor = AdaptiveColor::rgb(0x00dc_e4ea, 0x0029_4038);
 const INK: AdaptiveColor = AdaptiveColor::rgb(0x0020_3832, 0x00f4_f5ef);
+const MUTED_INK: AdaptiveColor = AdaptiveColor::rgb(0x0058_6e65, 0x009d_b5ac);
 const CONTROL: AdaptiveColor = AdaptiveColor::rgb(0x00e0_e8da, 0x002a_473d);
-const SIDEBAR_BACKGROUND: u32 = 0x0015_3e35;
-const SIDEBAR_HOVER_BACKGROUND: u32 = 0x002a_5849;
+const NAV_ACTIVE_BG: AdaptiveColor = AdaptiveColor::rgb(0x00e1_efea, 0x0021_4439);
+const NAV_ACTIVE_INK: AdaptiveColor = AdaptiveColor::rgb(0x0013_6658, 0x008b_e0c5);
+const NAV_HOVER_BG: AdaptiveColor = AdaptiveColor::rgb(0x00ea_f4ef, 0x001b_352d);
+const TOOLTIP_BG: AdaptiveColor = AdaptiveColor::rgb(0x0015_2822, 0x00eb_f4f0);
+const TOOLTIP_INK: AdaptiveColor = AdaptiveColor::rgb(0x00f4_f5ef, 0x0015_2822);
+
+const SIDEBAR_EXPANDED_WIDTH: f32 = 212.0;
+const SIDEBAR_COLLAPSED_WIDTH: f32 = 72.0;
+
+#[derive(Clone, Copy)]
+struct WorkbenchAppearance {
+    sidebar_collapsed: Signal<bool>,
+}
+
+impl WorkbenchAppearance {
+    fn new() -> Self {
+        Self {
+            sidebar_collapsed: signal(false),
+        }
+    }
+
+    fn is_dark() -> bool {
+        dark()
+    }
+
+    fn set_dark(dark_mode: bool) {
+        set_color_scheme(if dark_mode {
+            Appearance::Dark
+        } else {
+            Appearance::Light
+        });
+    }
+
+    fn toggle_dark() {
+        Self::set_dark(!untracked(dark));
+    }
+
+    fn is_collapsed(self) -> bool {
+        self.sidebar_collapsed.get()
+    }
+
+    fn set_sidebar_collapsed(self, collapsed: bool) {
+        self.sidebar_collapsed.set(collapsed);
+    }
+
+    fn toggle_sidebar(self) {
+        self.set_sidebar_collapsed(!self.sidebar_collapsed.get_untracked());
+    }
+
+    fn sidebar_width(self) -> f32 {
+        if self.is_collapsed() {
+            SIDEBAR_COLLAPSED_WIDTH
+        } else {
+            SIDEBAR_EXPANDED_WIDTH
+        }
+    }
+
+    fn content_width(self) -> f32 {
+        (window().width.0 - self.sidebar_width() - 1.0).max(0.0)
+    }
+
+    fn narrow_content(self) -> bool {
+        self.content_width() < 560.0
+    }
+
+    fn tight_content(self) -> bool {
+        self.content_width() < 280.0
+    }
+}
+
+fn icon_svg(markup: &'static str, size: f32) -> Svg {
+    svg(ImageSrc::svg_markup(markup)).w(px(size)).h(px(size))
+}
+
+fn styled_tooltip<M>(
+    placement: Placement,
+    offset: f32,
+    disabled: impl nsh_core::element::IntoProp<bool, M>,
+    label: impl IntoReactive<SharedString>,
+) -> nsh_base::TooltipElement {
+    tooltip()
+        .placement(placement)
+        .offset(px(offset))
+        .delay(150.0)
+        .disabled(disabled)
+        .px_2()
+        .py_1()
+        .rounded(px(6.0))
+        .bg(TOOLTIP_BG)
+        .text_color(TOOLTIP_INK)
+        .child(text(label).text_size(px(12.0)))
+}
 
 static HOME_LANDSCAPE: LazyLock<String> = LazyLock::new(|| {
     format!(
@@ -278,7 +378,7 @@ fn action_button(label: impl Into<String>, action: impl Fn() + 'static) -> View 
         .rounded(px(8.0))
         .role(AccessibilityRole::Button)
         .on_press(action)
-        .child(text(label.into()))
+        .child(text(label.into()).min_w(px(0.0)))
 }
 
 /// Renders an accessible button with the launcher's shared styling.
@@ -299,8 +399,14 @@ enum Page {
     #[cfg(target_os = "windows")]
     Achievements,
     Extensions,
-    #[cfg(target_os = "windows")]
     Settings,
+}
+
+#[derive(Clone, Copy)]
+struct PageMeta {
+    test_id: &'static str,
+    icon: &'static str,
+    label: &'static str,
 }
 
 impl Page {
@@ -318,28 +424,82 @@ impl Page {
         Self::Extensions,
     ];
 
-    fn label(self) -> &'static str {
+    fn meta(self) -> PageMeta {
         match self {
-            Self::Home => "首页",
-            Self::Game => "游戏管理",
-            Self::Community => "米游社",
-            Self::Profile => "角色资料",
+            Self::Home => PageMeta {
+                test_id: "nav-home",
+                icon: icons::HOME,
+                label: "首页",
+            },
+            Self::Game => PageMeta {
+                test_id: "nav-game",
+                icon: icons::GAMEPAD,
+                label: "游戏管理",
+            },
+            Self::Community => PageMeta {
+                test_id: "nav-community",
+                icon: icons::CALENDAR,
+                label: "米游社",
+            },
+            Self::Profile => PageMeta {
+                test_id: "nav-profile",
+                icon: icons::USERS,
+                label: "角色资料",
+            },
             #[cfg(target_os = "windows")]
-            Self::Wishes => "祈愿分析",
+            Self::Wishes => PageMeta {
+                test_id: "nav-wishes",
+                icon: icons::SPARKLES,
+                label: "祈愿分析",
+            },
             #[cfg(target_os = "windows")]
-            Self::Inventory => "背包仓库",
+            Self::Inventory => PageMeta {
+                test_id: "nav-inventory",
+                icon: icons::PACKAGE,
+                label: "背包仓库",
+            },
             #[cfg(target_os = "windows")]
-            Self::Achievements => "成就管理",
-            Self::Extensions => "扩展",
-            #[cfg(target_os = "windows")]
-            Self::Settings => "系统设置",
+            Self::Achievements => PageMeta {
+                test_id: "nav-achievements",
+                icon: icons::TROPHY,
+                label: "成就管理",
+            },
+            Self::Extensions => PageMeta {
+                test_id: "nav-extensions",
+                icon: icons::PUZZLE,
+                label: "扩展",
+            },
+            Self::Settings => PageMeta {
+                test_id: "nav-settings",
+                icon: icons::SETTINGS,
+                label: "系统设置",
+            },
         }
     }
+
+    fn label(self) -> &'static str {
+        self.meta().label
+    }
+}
+
+struct WorkbenchSession {
+    page: Signal<Page>,
+    appearance: WorkbenchAppearance,
+    environment: Rc<dyn LauncherEnvironment>,
+    profile: Signal<crate::profile::Profile>,
+    profile_error: Option<String>,
+    history_revision: Signal<u64>,
+    growth_revision: Signal<u64>,
+    #[cfg(target_os = "windows")]
+    database: Option<Result<PathBuf, String>>,
+    #[cfg(target_os = "windows")]
+    scanner: Option<Rc<crate::scanner::Sync>>,
 }
 
 /// Renders the same launcher with either the Windows environment or a test host.
 pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let page = signal(Page::Home);
+    let appearance = WorkbenchAppearance::new();
     let game_panel = element_ref();
     let open_install = move || {
         page.set(Page::Game);
@@ -363,33 +523,72 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         scanner: scanner.clone(),
     };
     let install = InstallSession::new(environment.clone(), move |path| set_default(state, path));
-    let community = crate::accounts::community_page(environment.clone(), profile);
-    #[cfg(target_os = "windows")]
-    let (scanner_settings, roster) = (
-        scanner.as_ref().map(crate::scanner::Sync::settings),
-        scanner.as_ref().map(crate::scanner::Sync::roster),
-    );
-    #[cfg(not(target_os = "windows"))]
-    let (scanner_settings, roster) = (None::<View>, None::<View>);
-    let extensions = crate::plugins::section(environment.clone());
-    #[cfg(target_os = "windows")]
-    let growth = database
-        .clone()
-        .map(|path| crate::growth::section(path, profile, growth_revision, history_revision));
-    #[cfg(not(target_os = "windows"))]
-    let growth = None::<View>;
-    let uid_spaces = crate::profile::spaces(
-        environment.clone(),
+    let session = WorkbenchSession {
+        page,
+        appearance,
+        environment,
         profile,
+        profile_error,
         history_revision,
         growth_revision,
-        profile_error.clone(),
-        roster,
-        growth,
-    );
-    #[cfg(target_os = "windows")]
-    let records = record_pages(
+        #[cfg(target_os = "windows")]
+        database,
+        #[cfg(target_os = "windows")]
+        scanner,
+    };
+    let content = workbench_content(session, game_panel, open_install, &directory, &install);
+    view()
+        .flex_1()
+        .min_h(px(0.0))
+        .bg(PAPER)
+        .text_color(INK)
+        .child(topbar(appearance))
+        .child(view().h(px(1.0)).bg(BORDER))
+        .child(
+            view()
+                .flex_1()
+                .min_h(px(0.0))
+                .flex_row()
+                .child(sidebar(
+                    page,
+                    appearance,
+                    install.sidebar_status(open_install),
+                ))
+                .child(view().w(px(1.0)).bg(BORDER))
+                .child(content),
+        )
+}
+
+fn workbench_content(
+    session: WorkbenchSession,
+    game_panel: ElementRef,
+    open_install: impl Fn() + Copy + 'static,
+    directory: &DirectoryControls,
+    install: &Rc<InstallSession>,
+) -> View {
+    let WorkbenchSession {
         page,
+        appearance,
+        environment,
+        profile,
+        profile_error,
+        history_revision,
+        growth_revision,
+        #[cfg(target_os = "windows")]
+        database,
+        #[cfg(target_os = "windows")]
+        scanner,
+    } = session;
+    let community_env = environment.clone();
+    let community_error = profile_error.clone();
+    #[cfg(target_os = "windows")]
+    let profile_database = database.clone();
+    let profile_env = environment.clone();
+    let extensions_env = environment.clone();
+    #[cfg(target_os = "windows")]
+    let (records, backup_section) = record_pages(
+        page,
+        appearance,
         environment,
         database,
         profile,
@@ -397,44 +596,60 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         growth_revision,
     );
     #[cfg(not(target_os = "windows"))]
-    let records: [Scroll; 0] = [];
+    let (records, backup_section): ([Scroll; 0], Option<BackupSectionBuilder>) = ([], None);
+    let settings = panel(page, Page::Settings, appearance, move || {
+        settings_page(appearance, backup_section)
+    });
     view()
+        .test_id("launcher-content")
         .flex_1()
-        .min_h(px(0.0))
-        .flex_row()
-        .bg(PAPER)
-        .text_color(INK)
-        .child(sidebar(page, install.sidebar_status(open_install)))
+        .min_w(px(0.0))
+        // Hiding a page keeps its controls and pending work alive for this session.
+        .child(panel(page, Page::Home, appearance, || {
+            home(page, appearance, directory, install, open_install)
+        }))
         .child(
-            view()
-                .flex_1()
-                .min_w(px(0.0))
-                // Hiding a page keeps its controls and pending work alive for this session.
-                .child(panel(
-                    page,
-                    Page::Home,
-                    home(page, &directory, &install, open_install),
-                ))
-                .child(
-                    panel(
-                        page,
-                        Page::Game,
-                        game_management(&directory, &install, scanner_settings),
-                    )
-                    .element_ref(&game_panel),
-                )
-                .child(panel(
-                    page,
-                    Page::Community,
-                    view()
-                        .gap_4()
-                        .child(profile_error.map(text))
-                        .child(community),
-                ))
-                .child(panel(page, Page::Profile, uid_spaces))
-                .child(panel(page, Page::Extensions, extensions))
-                .children(records.into_iter().map(IntoElement::into_element)),
+            panel(page, Page::Game, appearance, || {
+                #[cfg(target_os = "windows")]
+                let scanner_settings = scanner.as_ref().map(crate::scanner::Sync::settings);
+                #[cfg(not(target_os = "windows"))]
+                let scanner_settings = None::<View>;
+                game_management(directory, install, scanner_settings)
+            })
+            .element_ref(&game_panel),
         )
+        .child(panel(page, Page::Community, appearance, || {
+            view()
+                .gap_4()
+                .child(community_error.map(text))
+                .child(crate::accounts::community_page(community_env, profile))
+        }))
+        .child(panel(page, Page::Profile, appearance, || {
+            #[cfg(target_os = "windows")]
+            let roster = scanner.as_ref().map(crate::scanner::Sync::roster);
+            #[cfg(not(target_os = "windows"))]
+            let roster = None::<View>;
+            #[cfg(target_os = "windows")]
+            let growth = profile_database.map(|path| {
+                crate::growth::section(path, profile, growth_revision, history_revision)
+            });
+            #[cfg(not(target_os = "windows"))]
+            let growth = None::<View>;
+            crate::profile::spaces(
+                profile_env,
+                profile,
+                history_revision,
+                growth_revision,
+                profile_error,
+                roster,
+                growth,
+            )
+        }))
+        .child(panel(page, Page::Extensions, appearance, || {
+            crate::plugins::section(extensions_env)
+        }))
+        .children(records.into_iter().map(IntoElement::into_element))
+        .child(settings)
 }
 
 fn load_profile(
@@ -449,15 +664,18 @@ fn load_profile(
     }
 }
 
+type BackupSectionBuilder = Box<dyn FnOnce() -> View>;
+
 #[cfg(target_os = "windows")]
 fn record_pages(
     page: Signal<Page>,
+    appearance: WorkbenchAppearance,
     environment: Rc<dyn LauncherEnvironment>,
     database: Option<Result<PathBuf, String>>,
     profile: Signal<crate::profile::Profile>,
     history_revision: Signal<u64>,
     growth_revision: Signal<u64>,
-) -> [Scroll; 4] {
+) -> ([Scroll; 3], Option<BackupSectionBuilder>) {
     let database = database.unwrap_or_else(|| Err("当前环境无法读取本机 UID 数据".into()));
     let inventory_database = database.clone();
     let inventory_opened = signal(false);
@@ -466,38 +684,264 @@ fn record_pages(
             inventory_opened.set(true);
         }
     });
-    [
-        panel(
-            page,
-            Page::Wishes,
-            crate::wishes::section(database.clone(), profile, history_revision),
-        ),
-        panel(
-            page,
-            Page::Inventory,
-            when(
-                move || inventory_opened.get(),
-                move || {
-                    crate::inventory::section(
-                        environment.clone(),
-                        inventory_database.clone(),
-                        profile,
-                        history_revision,
-                    )
-                },
-            ),
-        ),
-        panel(
-            page,
-            Page::Achievements,
-            crate::achievements::section(database.clone(), profile, history_revision),
-        ),
-        panel(
-            page,
-            Page::Settings,
-            crate::backup::section(database, profile, history_revision, growth_revision),
-        ),
-    ]
+    let wishes_database = database.clone();
+    let achievements_database = database.clone();
+    (
+        [
+            panel(page, Page::Wishes, appearance, move || {
+                crate::wishes::section(wishes_database, profile, history_revision)
+            }),
+            panel(page, Page::Inventory, appearance, move || {
+                when(
+                    move || inventory_opened.get(),
+                    move || {
+                        crate::inventory::section(
+                            environment.clone(),
+                            inventory_database.clone(),
+                            profile,
+                            history_revision,
+                        )
+                    },
+                )
+            }),
+            panel(page, Page::Achievements, appearance, move || {
+                crate::achievements::section(achievements_database, profile, history_revision)
+            }),
+        ],
+        Some(Box::new(move || {
+            crate::backup::section(database, profile, history_revision, growth_revision)
+        })),
+    )
+}
+
+fn topbar_icon_button(
+    test_id: &'static str,
+    label: impl Fn() -> &'static str + Copy + 'static,
+    state: impl Fn() -> AccessibilityState + 'static,
+    icon: impl Fn() -> &'static str + 'static,
+    action: impl Fn() + 'static,
+) -> View {
+    view()
+        .test_id(test_id)
+        .w(px(34.0))
+        .h(px(34.0))
+        .rounded(px(6.0))
+        .items_center()
+        .justify_center()
+        .role(AccessibilityRole::Button)
+        .label(label)
+        .accessibility_state(state)
+        .on_press(action)
+        .hover(|style| style.bg(NAV_HOVER_BG))
+        .tooltip(styled_tooltip(Placement::Bottom, 6.0, false, label))
+        .child(
+            svg(move || ImageSrc::svg_markup(icon()))
+                .w(px(20.0))
+                .h(px(20.0)),
+        )
+}
+
+fn topbar(appearance: WorkbenchAppearance) -> View {
+    let sidebar_toggle = topbar_icon_button(
+        "launcher-sidebar-toggle",
+        move || {
+            if appearance.is_collapsed() {
+                "展开侧栏"
+            } else {
+                "收起侧栏"
+            }
+        },
+        move || AccessibilityState {
+            expanded: Some(!appearance.is_collapsed()),
+            ..Default::default()
+        },
+        move || {
+            if appearance.is_collapsed() {
+                icons::PANEL_LEFT_OPEN
+            } else {
+                icons::PANEL_LEFT_CLOSE
+            }
+        },
+        move || appearance.toggle_sidebar(),
+    );
+    let theme_toggle = topbar_icon_button(
+        "launcher-theme-toggle",
+        move || {
+            if WorkbenchAppearance::is_dark() {
+                "切换浅色模式"
+            } else {
+                "切换深色模式"
+            }
+        },
+        move || AccessibilityState {
+            pressed: Some(if WorkbenchAppearance::is_dark() {
+                Checked::True
+            } else {
+                Checked::False
+            }),
+            ..Default::default()
+        },
+        move || {
+            if WorkbenchAppearance::is_dark() {
+                icons::SUN
+            } else {
+                icons::MOON
+            }
+        },
+        WorkbenchAppearance::toggle_dark,
+    );
+    view()
+        .test_id("launcher-topbar")
+        .h(px(46.0))
+        .flex_shrink(0.0)
+        .flex_row()
+        .items_center()
+        .px_3()
+        .gap_3()
+        .bg(SURFACE)
+        .text_color(INK)
+        .child(sidebar_toggle)
+        .child(
+            view()
+                .test_id("launcher-brand")
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(icon_svg(icons::COMPASS, 20.0).text_color(ACCENT))
+                .child(
+                    text("Genshin Go")
+                        .text_size(px(15.0))
+                        .font_weight(FontWeight::BOLD),
+                ),
+        )
+        .child(view().flex_1())
+        .child(theme_toggle)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Appearance,
+    #[cfg(target_os = "windows")]
+    Backup,
+}
+
+fn settings_option_button(
+    test_id: &'static str,
+    label: &'static str,
+    selected: impl Fn() -> bool + Copy + 'static,
+    action: impl Fn() + 'static,
+) -> View {
+    action_button(label, action)
+        .test_id(test_id)
+        .accessibility_state(move || AccessibilityState {
+            selected: selected(),
+            ..Default::default()
+        })
+        .bg(move || if selected() { ACCENT } else { CONTROL })
+        .text_color(move || if selected() { white().into() } else { INK })
+        .style_when(selected, |style| style.font_weight(FontWeight::BOLD))
+}
+
+fn settings_card(title: &'static str, description: &'static str, controls: View) -> View {
+    view()
+        .p_4()
+        .rounded(px(10.0))
+        .bg(CARD)
+        .gap_2()
+        .child(
+            text(title)
+                .text_size(px(16.0))
+                .font_weight(FontWeight::BOLD),
+        )
+        .child(text(description).text_size(px(13.0)).text_color(MUTED_INK))
+        .child(controls)
+}
+
+fn appearance_settings(appearance: WorkbenchAppearance) -> View {
+    view()
+        .test_id("settings-appearance")
+        .gap_3()
+        .child(settings_card(
+            "界面主题",
+            "选择浅色或深色。顶栏与此处反映同一主题状态。",
+            view()
+                .flex_row()
+                .flex_wrap()
+                .gap_2()
+                .child(settings_option_button(
+                    "theme-option-light",
+                    "浅色",
+                    move || !WorkbenchAppearance::is_dark(),
+                    move || WorkbenchAppearance::set_dark(false),
+                ))
+                .child(settings_option_button(
+                    "theme-option-dark",
+                    "深色",
+                    WorkbenchAppearance::is_dark,
+                    move || WorkbenchAppearance::set_dark(true),
+                )),
+        ))
+        .child(settings_card(
+            "左侧导航",
+            "收起后仅显示图标，悬停可查看模块名称。",
+            view()
+                .flex_row()
+                .flex_wrap()
+                .gap_2()
+                .child(settings_option_button(
+                    "sidebar-option-expanded",
+                    "展开",
+                    move || !appearance.is_collapsed(),
+                    move || appearance.set_sidebar_collapsed(false),
+                ))
+                .child(settings_option_button(
+                    "sidebar-option-collapsed",
+                    "仅图标",
+                    move || appearance.is_collapsed(),
+                    move || appearance.set_sidebar_collapsed(true),
+                )),
+        ))
+}
+
+fn settings_page(
+    appearance: WorkbenchAppearance,
+    backup_section: Option<BackupSectionBuilder>,
+) -> View {
+    let tab = signal(SettingsTab::Appearance);
+    let mut tabs = view()
+        .test_id("settings-tabs")
+        .flex_row()
+        .flex_wrap()
+        .gap_2()
+        .child(settings_option_button(
+            "settings-tab-appearance",
+            "外观",
+            move || tab.get() == SettingsTab::Appearance,
+            move || tab.set(SettingsTab::Appearance),
+        ));
+    #[cfg(target_os = "windows")]
+    {
+        tabs = tabs.child(settings_option_button(
+            "settings-tab-backup",
+            "备份与恢复",
+            move || tab.get() == SettingsTab::Backup,
+            move || tab.set(SettingsTab::Backup),
+        ));
+    }
+    let appearance_panel = appearance_settings(appearance)
+        .style_when(move || tab.get() != SettingsTab::Appearance, Styled::hidden);
+    let mut root = view().gap_4().child(tabs).child(appearance_panel);
+    #[cfg(target_os = "windows")]
+    if let Some(backup) = backup_section {
+        let backup_panel = view()
+            .test_id("settings-backup")
+            .style_when(move || tab.get() != SettingsTab::Backup, Styled::hidden)
+            .child(backup());
+        root = root.child(backup_panel);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = backup_section;
+    root
 }
 
 fn game_management(
@@ -513,88 +957,113 @@ fn game_management(
         .child(install.setup())
 }
 
-fn sidebar(page: Signal<Page>, download_status: View) -> View {
-    #[cfg(target_os = "windows")]
-    let settings = Some(
-        view()
-            .gap_1()
-            .child(view().h(px(1.0)).bg(rgb(0x005c_8475)))
-            .child(page_button(page, Page::Settings)),
-    );
-    #[cfg(not(target_os = "windows"))]
-    let settings = None::<View>;
+fn sidebar(page: Signal<Page>, appearance: WorkbenchAppearance, download_status: View) -> View {
+    let settings = view()
+        .test_id("launcher-sidebar-bottom")
+        .gap_2()
+        .child(view().h(px(1.0)).bg(BORDER))
+        .child(page_button(page, Page::Settings, appearance));
     view()
         .test_id("launcher-sidebar")
-        .w(|| {
-            px(if compact_window() {
-                70.0
-            } else if narrow_window() {
-                100.0
-            } else {
-                164.0
-            })
-        })
+        .w(move || px(appearance.sidebar_width()))
         .flex_shrink(0.0)
-        .p(|| px(if narrow_window() { 8.0 } else { 12.0 }))
+        .p(px(10.0))
         .gap_1()
-        .bg(rgb(SIDEBAR_BACKGROUND))
-        .text_color(rgb(0x00f4_f3de))
-        .child(
-            text("Genshin-Go")
-                .text_size(|| px(if narrow_window() { 12.0 } else { 14.0 }))
-                .mb_2()
-                .font_weight(FontWeight::BOLD)
-                .style_when(compact_window, Styled::hidden),
-        )
+        .bg(SURFACE)
+        .text_color(INK)
         .child(
             scroll().flex_1().min_h(px(0.0)).child(
                 view().gap_1().children(
                     Page::MAIN
                         .iter()
-                        .map(|&target| page_button(page, target).into_element()),
+                        .map(|&target| page_button(page, target, appearance).into_element()),
                 ),
             ),
         )
-        .child(download_status.hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND))))
+        .child(download_status.hover(|style| style.bg(NAV_HOVER_BG)))
         .child(settings)
 }
 
-fn page_button(page: Signal<Page>, target: Page) -> View {
+fn page_button(page: Signal<Page>, target: Page, appearance: WorkbenchAppearance) -> View {
     let selected = move || page.get() == target;
-    action_button(target.label(), move || page.set(target))
-        .py_1()
-        .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
-        .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
-        .style_when(selected, |style| style.font_weight(FontWeight::BOLD))
+    let meta = target.meta();
+    let button = view()
+        .test_id(meta.test_id)
+        .h(px(38.0))
+        .rounded(px(7.0))
+        .flex_row()
+        .items_center()
+        .px(move || px(if appearance.is_collapsed() { 4.0 } else { 8.0 }))
+        .gap(move || px(if appearance.is_collapsed() { 0.0 } else { 8.0 }))
+        .role(AccessibilityRole::Button)
+        .label(meta.label)
         .accessibility_state(move || AccessibilityState {
             selected: selected(),
+            current: selected().then_some(AccessibilityCurrent::Page),
             ..Default::default()
         })
-        .bg(move || {
+        .bg(move || if selected() { NAV_ACTIVE_BG } else { SURFACE })
+        .hover(|style| style.bg(NAV_HOVER_BG))
+        .tooltip(styled_tooltip(
+            Placement::Right,
+            8.0,
+            move || !appearance.is_collapsed(),
+            meta.label,
+        ))
+        .child(view().w(px(3.0)).h(px(20.0)).rounded(px(2.0)).bg(move || {
             if selected() {
-                rgb(0x0037_6e5b)
+                ACCENT
             } else {
-                rgb(SIDEBAR_BACKGROUND)
+                AdaptiveColor::TRANSPARENT
             }
-        })
-        .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
+        }))
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .style_when(move || appearance.is_collapsed(), Styled::justify_center)
+                .child(icon_svg(meta.icon, 20.0).text_color(move || {
+                    if selected() {
+                        NAV_ACTIVE_INK
+                    } else {
+                        MUTED_INK
+                    }
+                }))
+                .child(
+                    text(meta.label)
+                        .text_size(px(14.0))
+                        .text_color(move || if selected() { NAV_ACTIVE_INK } else { INK })
+                        .style_when(selected, |style| style.font_weight(FontWeight::BOLD))
+                        .style_when(move || appearance.is_collapsed(), Styled::hidden),
+                ),
+        );
+    button.on_press(move || page.set(target))
 }
 
-fn narrow_window() -> bool {
-    window().width.0 < 700.0
-}
-
-fn compact_window() -> bool {
-    window().width.0 < 340.0
-}
-
-fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> Scroll {
+fn panel<E: IntoElement>(
+    page: Signal<Page>,
+    target: Page,
+    appearance: WorkbenchAppearance,
+    content: impl FnOnce() -> E,
+) -> Scroll {
+    let body = content();
     scroll()
         .flex_1()
         .style_when(move || page.get() != target, Styled::hidden)
         .child(
             view()
-                .p(|| px(if narrow_window() { 12.0 } else { 28.0 }))
+                .w_full()
+                .min_w(px(0.0))
+                .p(move || {
+                    px(if appearance.narrow_content() {
+                        12.0
+                    } else {
+                        28.0
+                    })
+                })
                 .gap_3()
                 .child(
                     view().test_id("launcher-page-title").child(
@@ -603,32 +1072,44 @@ fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> Scroll 
                             .font_weight(FontWeight::BOLD),
                     ),
                 )
-                .child(content.into_element()),
+                .child(body.into_element()),
         )
 }
 
 fn home(
     page: Signal<Page>,
+    appearance: WorkbenchAppearance,
     directory: &DirectoryControls,
     install: &Rc<InstallSession>,
     open_install: impl Fn() + Copy + 'static,
 ) -> View {
     let state = directory.state;
     view()
+        .test_id("launcher-home-hero")
+        .w_full()
+        .min_w(px(0.0))
         .flex_row()
         .rounded(px(12.0))
         .overflow_hidden()
         .bg(AdaptiveColor::rgb(0x00e5_ecdb, 0x0025_3b32))
         .child(
             view()
-                .w(move || px((window().width.0 * 0.32).clamp(236.0, 332.0)))
+                .test_id("launcher-home-copy")
+                .w(move || px((appearance.content_width() * 0.42).clamp(236.0, 332.0)))
                 .max_w(relative(1.0))
+                .min_w(px(0.0))
                 .flex_shrink(0.0)
-                .min_h(|| px(if narrow_window() { 260.0 } else { 356.0 }))
-                .p(|| {
-                    px(if compact_window() {
-                        8.0
-                    } else if narrow_window() {
+                .min_h(move || {
+                    px(if appearance.narrow_content() {
+                        260.0
+                    } else {
+                        356.0
+                    })
+                })
+                .p(move || {
+                    px(if appearance.tight_content() {
+                        10.0
+                    } else if appearance.narrow_content() {
                         16.0
                     } else {
                         32.0
@@ -640,16 +1121,27 @@ fn home(
                 .child(text("Windows · 国服官服").text_size(px(13.0)))
                 .child(
                     text("原神启动器")
-                        .text_size(|| px(if narrow_window() { 25.0 } else { 38.0 }))
+                        .text_size(move || {
+                            px(if appearance.narrow_content() {
+                                25.0
+                            } else {
+                                38.0
+                            })
+                        })
                         .font_weight(FontWeight::BOLD),
                 )
-                .child(text(move || state.with(|state| state.message.clone())))
+                .child(
+                    text(move || state.with(|state| state.message.clone()))
+                        .w_full()
+                        .min_w(px(0.0)),
+                )
                 .child(directory.home_actions(install, open_install))
                 .child(button("管理游戏", move || page.set(Page::Game)))
                 .child(install.home_status()),
         )
         .child(
             image(HOME_LANDSCAPE.as_str())
+                .test_id("launcher-home-landscape")
                 .flex_1()
                 .min_w(px(0.0))
                 .object_fit(ResizeMode::Cover),
@@ -710,6 +1202,7 @@ impl DirectoryControls {
             .items_start()
             .child(
                 action_button("普通启动", move || controls.launch())
+                    .test_id("launcher-ordinary-launch")
                     .bg(ACCENT)
                     .text_color(white())
                     .px_4()
@@ -726,7 +1219,10 @@ impl DirectoryControls {
                     None::<View>
                 }
             })
-            .child(self.candidates().style_when(ready, Styled::hidden))
+            .child(
+                self.candidates(Some("launcher-home-candidate-path"))
+                    .style_when(ready, Styled::hidden),
+            )
             .child(
                 view()
                     .flex_row()
@@ -779,7 +1275,7 @@ impl DirectoryControls {
         let _ = report_launch(state, environment.launch(&directory));
     }
 
-    fn candidates(&self) -> View {
+    fn candidates(&self, path_test_id: Option<&'static str>) -> View {
         let state = self.state;
         let environment = self.environment.clone();
         view()
@@ -794,7 +1290,11 @@ impl DirectoryControls {
             .child(dynamic(move || {
                 let directories = state.with(|s| s.directories.clone());
                 if let [only] = directories.as_slice() {
-                    return vec![text(only.display().to_string()).w_full().into_element()];
+                    let mut path = text(only.display().to_string()).w_full().min_w(px(0.0));
+                    if let Some(id) = path_test_id {
+                        path = path.test_id(id);
+                    }
+                    return vec![path.into_element()];
                 }
                 directories
                     .into_iter()
@@ -804,6 +1304,7 @@ impl DirectoryControls {
                             state.update(|s| s.candidate = Some(path.clone()));
                         })
                         .w_full()
+                        .min_w(px(0.0))
                         .accessibility_state(move || AccessibilityState {
                             selected: state.with(|s| s.candidate.as_ref() == Some(&selected_path)),
                             ..Default::default()
@@ -842,16 +1343,26 @@ impl DirectoryControls {
                     .text_size(px(24.0))
                     .font_weight(FontWeight::BOLD),
             )
-            .child(text(move || {
-                state.with(|s| match &s.saved {
-                    Some(SavedDirectory::Valid(path)) => format!("默认目录：{}", path.display()),
-                    Some(SavedDirectory::Invalid(path)) => {
-                        format!("已失效的默认目录：{}", path.display())
-                    }
-                    None => "尚未选择默认目录".into(),
+            .child(
+                text(move || {
+                    state.with(|s| match &s.saved {
+                        Some(SavedDirectory::Valid(path)) => {
+                            format!("默认目录：{}", path.display())
+                        }
+                        Some(SavedDirectory::Invalid(path)) => {
+                            format!("已失效的默认目录：{}", path.display())
+                        }
+                        None => "尚未选择默认目录".into(),
+                    })
                 })
-            }))
-            .child(text(move || state.with(|s| s.message.clone())))
+                .w_full()
+                .min_w(px(0.0)),
+            )
+            .child(
+                text(move || state.with(|s| s.message.clone()))
+                    .w_full()
+                    .min_w(px(0.0)),
+            )
             .child(button("更换目录", move || {
                 state.update(|s| s.editing = !s.editing);
             }))
@@ -864,7 +1375,7 @@ impl DirectoryControls {
                         refreshed.editing = true;
                         state.set(refreshed);
                     }))
-                    .child(self.candidates())
+                    .child(self.candidates(None))
                     .child(self.directory_picker("选择游戏目录"))
                     .child(
                         input()

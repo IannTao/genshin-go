@@ -324,6 +324,7 @@ fn history(
                         .child(
                             view()
                                 .flex_row()
+                                .flex_wrap()
                                 .gap_2()
                                 .child((index > 0).then(|| {
                                     button("上一页", move || {
