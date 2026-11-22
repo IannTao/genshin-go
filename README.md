@@ -4,14 +4,18 @@ On Windows, use **首页** to confirm an existing installation and launch the ga
 
 ## Windows curated plugin catalog
 
-Open **扩展** to browse the curated plugin catalog maintained by Genshin-Go. The launcher
-does not connect to arbitrary third-party store sources. The initial confirmed entry is
-[FufuLauncher.UnlockerIsland](https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland)
+Open **扩展** to browse and manage the curated plugin catalog maintained by Genshin-Go.
+The launcher does not connect to arbitrary third-party store sources. The initial confirmed
+entry is [FufuLauncher.UnlockerIsland](https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland)
 (pinned commit `1830f9d7`, 2026-11-18). The panel displays its verified type, version,
 upstream source, managed install location under `plugins/fufu-unlocker-island`, required
-administrator privileges and risk notice, compatible Windows native components, and
-AGPL-3.0 license notice. If catalog loading fails, the page reports the error and offers
-**重新加载目录** to retry.
+administrator privileges and risk notice, compatible local module files
+(`FufuLauncher.UnlockerIsland.dll` and `config.ini`), and AGPL-3.0 license notice.
+Use **安装插件**, **检查并更新** (manual only; no automatic updates), and **卸载插件**
+against the configured local source directory (default
+`C:\softwares\FufuLauncher\Plugins\FuFuPlugin`). Installed state and content SHA-256
+digest are saved in the managed plugin directory and verified on reopen. If catalog
+loading fails, the page reports the error and offers **重新加载目录** to retry.
 
 ## Windows owned character sync
 

@@ -53,6 +53,7 @@ struct Environment {
     fail_authorization_save: Signal<bool>,
     fail_launch: Signal<bool>,
     fail_plugin_catalog: Signal<bool>,
+    plugins_dir: PathBuf,
     launched: Signal<String>,
     install_target: Rc<RefCell<Option<PathBuf>>>,
     install_progress: Rc<Cell<u64>>,
@@ -299,7 +300,7 @@ impl LauncherEnvironment for Environment {
         nsh_app_genshin_go::plugins::bundled_catalog()
     }
     fn plugins_root(&self) -> Option<PathBuf> {
-        Some(PathBuf::from(r"C:\Genshin-Go-Fixture\plugins"))
+        Some(self.plugins_dir.clone())
     }
     fn install_game(&self, parent: Option<PathBuf>, control: InstallControl) -> InstallOperation {
         if self
@@ -378,6 +379,13 @@ pub fn Fixture() -> impl IntoElement {
         fail_authorization_save: signal(false),
         fail_launch: signal(false),
         fail_plugin_catalog: signal(false),
+        plugins_dir: std::env::temp_dir().join(format!(
+            "genshin-go-fixture-plugins-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        )),
         launched: signal(String::new()),
         install_target: Rc::default(),
         install_progress: Rc::default(),

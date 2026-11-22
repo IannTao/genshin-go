@@ -797,6 +797,62 @@ windowsTest("browses the curated plugin catalog from the Extensions page", async
   expect(texts).toContain("来源：https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland");
   expect(texts.some(line => line.startsWith("安装位置：") && line.endsWith("fufu-unlocker-island"))).toBe(true);
   expect(texts.some(line => line.startsWith("权限与风险：") && line.includes("管理员权限"))).toBe(true);
-  expect(texts.some(line => line.startsWith("兼容格式：") && line.includes("Launcher_2.exe"))).toBe(true);
+  expect(texts.some(line => line.startsWith("兼容格式：") && line.includes("FufuLauncher.UnlockerIsland.dll"))).toBe(true);
   expect(texts.some(line => line.startsWith("许可证：") && line.includes("AGPL-3.0"))).toBe(true);
 });
+
+windowsTest("installs, manually updates, verifies after reopen, and uninstalls a curated plugin", async () => {
+  const sourceV1 = "tests/data/plugin-fufu-v1";
+  const sourceV2 = "tests/data/plugin-fufu-v2";
+  const brokenDir = "tests/data/plugin-fufu-broken";
+
+  const app = await open(".", { width: 1024, height: 960 });
+  await app.press("扩展");
+  expect(app.texts()).toContain("安装状态：未安装");
+  expect(app.texts()).toContain("当前版本：未安装");
+
+  await app.clear("plugin-source-dir");
+  await app.type("plugin-source-dir", brokenDir);
+  await app.press("安装插件");
+  expect(app.texts()).toContain("安装失败：来源目录缺少必需文件：FufuLauncher.UnlockerIsland.dll");
+  expect(app.texts()).toContain("安装状态：未安装");
+
+  await app.clear("plugin-source-dir");
+  await app.type("plugin-source-dir", sourceV1);
+  await app.press("安装插件");
+  expect(app.texts()).toContain("安装状态：已安装");
+  const v1Version = app.texts().find(line => line.startsWith("当前版本：1830f9d7"));
+  expect(v1Version).toBeTruthy();
+
+  const reopened = await open(".", { width: 1024, height: 960 });
+  await reopened.press("扩展");
+  expect(reopened.texts()).toContain("安装状态：已安装");
+  expect(reopened.texts()).toContain(v1Version);
+
+  await reopened.clear("plugin-source-dir");
+  await reopened.type("plugin-source-dir", sourceV1);
+  await reopened.press("检查并更新");
+  expect(reopened.texts().some(line => line.startsWith("已是最新版本，无需更新"))).toBe(true);
+
+  await reopened.clear("plugin-source-dir");
+  await reopened.type("plugin-source-dir", sourceV2);
+  await reopened.press("检查并更新");
+  expect(reopened.texts().some(line => line.startsWith("已更新 FufuLauncher.UnlockerIsland"))).toBe(true);
+  const v2Version = reopened.texts().find(line => line.startsWith("当前版本：1830f9d7"));
+  expect(v2Version).toBeTruthy();
+  expect(v2Version).not.toBe(v1Version);
+
+  await reopened.clear("plugin-source-dir");
+  await reopened.type("plugin-source-dir", brokenDir);
+  await reopened.press("检查并更新");
+  expect(reopened.texts()).toContain("更新失败：来源目录缺少必需文件：FufuLauncher.UnlockerIsland.dll");
+  expect(reopened.texts()).toContain(v2Version);
+
+  await reopened.press("卸载插件");
+  expect(reopened.texts()).toContain("已卸载 FufuLauncher.UnlockerIsland");
+  expect(reopened.texts()).toContain("安装状态：未安装");
+
+  const afterUninstall = await open(".", { width: 1024, height: 960 });
+  await afterUninstall.press("扩展");
+  expect(afterUninstall.texts()).toContain("安装状态：未安装");
+}, 60000);

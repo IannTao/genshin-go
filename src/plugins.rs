@@ -1,6 +1,9 @@
 //! Curated plugin catalog model, validation, and Extensions page UI.
 
+mod store;
+
 use crate::launcher::{LauncherEnvironment, button};
+use nsh_core::element::input;
 use nsh_core::prelude::*;
 use serde::Deserialize;
 use std::{
@@ -8,6 +11,7 @@ use std::{
     path::{Component, Path, PathBuf},
     rc::Rc,
 };
+use store::{InstallStatus, UpdateOutcome};
 
 const SUPPORTED_CATALOG_VERSION: u32 = 1;
 const BUNDLED_CATALOG_JSON: &str = include_str!("../assets/plugin-catalog.json");
@@ -27,6 +31,8 @@ struct PluginEntry {
     commit: String,
     source_url: String,
     install_subpath: String,
+    default_local_source: String,
+    required_files: Vec<String>,
     permissions: String,
     compatible_format: String,
     license: String,
@@ -88,6 +94,15 @@ fn validate_entry(mut entry: PluginEntry) -> Result<PluginEntry, String> {
     }
     entry.install_subpath = require_non_empty("install_subpath", &entry.install_subpath)?;
     validate_install_subpath(&entry.id, &entry.install_subpath)?;
+    entry.default_local_source =
+        require_non_empty("default_local_source", &entry.default_local_source)?;
+    if entry.required_files.is_empty() {
+        return Err(format!("插件 {} 缺少必需文件列表", entry.id));
+    }
+    for file in &mut entry.required_files {
+        *file = require_non_empty("required_files", file)?;
+        store::validate_file_name(file)?;
+    }
     entry.permissions = require_non_empty("permissions", &entry.permissions)?;
     entry.compatible_format = require_non_empty("compatible_format", &entry.compatible_format)?;
     entry.license = require_non_empty("license", &entry.license)?;
@@ -137,10 +152,13 @@ fn load_state(environment: &dyn LauncherEnvironment) -> CatalogState {
     }
 }
 
-/// Renders the Extensions page for browsing the curated plugin catalog.
+/// Renders the Extensions page for browsing and managing the curated plugin catalog.
 pub(crate) fn section(environment: Rc<dyn LauncherEnvironment>) -> View {
     let state = signal(load_state(environment.as_ref()));
     let plugins_root: Option<PathBuf> = environment.plugins_root();
+    let source_input = signal(initial_source_path(&state.get_untracked()));
+    let action_message = signal(String::new());
+    let status_revision = signal(0_u64);
     let reload_env = environment;
 
     view()
@@ -158,11 +176,17 @@ pub(crate) fn section(environment: Rc<dyn LauncherEnvironment>) -> View {
                 .flex_row()
                 .gap_2()
                 .child(button("重新加载目录", move || {
-                    state.set(load_state(reload_env.as_ref()));
+                    let next = load_state(reload_env.as_ref());
+                    if source_input.get_untracked().is_empty() {
+                        source_input.set(initial_source_path(&next));
+                    }
+                    state.set(next);
+                    status_revision.update(|rev| *rev += 1);
                 })),
         )
         .child(dynamic(move || {
-            let root = plugins_root.as_deref();
+            let _ = status_revision.get();
+            let root = plugins_root.clone();
             match state.get() {
                 CatalogState::Failed(error) => vec![load_failure_card(&error).into_element()],
                 CatalogState::Loaded {
@@ -174,15 +198,37 @@ pub(crate) fn section(environment: Rc<dyn LauncherEnvironment>) -> View {
                         .and_then(|id| catalog.entries.iter().find(|entry| entry.id == id))
                         .or_else(|| catalog.entries.first())
                         .cloned();
-                    let mut elements =
-                        vec![catalog_list(&catalog, selected_entry.as_ref(), state).into_element()];
+                    let mut elements = vec![
+                        catalog_list(&catalog, selected_entry.as_ref(), state, source_input)
+                            .into_element(),
+                    ];
                     if let Some(entry) = selected_entry {
-                        elements.push(entry_details(root, &entry).into_element());
+                        elements.push(
+                            entry_details(
+                                root,
+                                &entry,
+                                source_input,
+                                action_message,
+                                status_revision,
+                            )
+                            .into_element(),
+                        );
                     }
                     elements
                 }
             }
         }))
+}
+
+fn initial_source_path(state: &CatalogState) -> String {
+    match state {
+        CatalogState::Loaded { catalog, .. } => catalog
+            .entries
+            .first()
+            .map(|entry| entry.default_local_source.clone())
+            .unwrap_or_default(),
+        CatalogState::Failed(_) => String::new(),
+    }
 }
 
 fn load_failure_card(error: &str) -> View {
@@ -201,6 +247,7 @@ fn catalog_list(
     catalog: &PluginCatalog,
     selected_entry: Option<&PluginEntry>,
     state: Signal<CatalogState>,
+    source_input: Signal<String>,
 ) -> View {
     view()
         .gap_2()
@@ -211,6 +258,7 @@ fn catalog_list(
         )
         .children(catalog.entries.iter().map(|entry| {
             let entry_id = entry.id.clone();
+            let default_source = entry.default_local_source.clone();
             let is_selected = selected_entry.is_some_and(|selected| selected.id == entry.id);
             let label = format!("{} · {} · {}", entry.name, entry.kind, entry.version);
             view()
@@ -233,6 +281,7 @@ fn catalog_list(
                     AdaptiveColor::rgb(0x0020_3832, 0x00f4_f5ef)
                 })
                 .on_press(move || {
+                    source_input.set(default_source.clone());
                     state.update(|current| {
                         if let CatalogState::Loaded { selected_id, .. } = current {
                             *selected_id = Some(entry_id.clone());
@@ -244,8 +293,33 @@ fn catalog_list(
         }))
 }
 
-fn entry_details(plugins_root: Option<&Path>, entry: &PluginEntry) -> View {
-    let location = install_location(plugins_root, entry);
+fn entry_details(
+    plugins_root: Option<PathBuf>,
+    entry: &PluginEntry,
+    source_input: Signal<String>,
+    action_message: Signal<String>,
+    status_revision: Signal<u64>,
+) -> View {
+    let location = install_location(plugins_root.as_deref(), entry);
+    let inspect_result = plugins_root.as_deref().map(|root| {
+        store::inspect(
+            root,
+            &entry.install_subpath,
+            &entry.id,
+            &entry.required_files,
+        )
+    });
+
+    let (status_line, version_line) = status_summary(inspect_result.as_ref());
+    let controls = management_controls(
+        plugins_root,
+        entry,
+        inspect_result.as_ref(),
+        source_input,
+        action_message,
+        status_revision,
+    );
+
     view()
         .gap_2()
         .p_3()
@@ -261,10 +335,204 @@ fn entry_details(plugins_root: Option<&Path>, entry: &PluginEntry) -> View {
         .child(text(format!("核实提交：{}", entry.commit)))
         .child(text(format!("来源：{}", entry.source_url)))
         .child(text(format!("安装位置：{location}")))
+        .child(text(status_line).font_weight(FontWeight::BOLD))
+        .child(text(version_line))
         .child(text(format!("权限与风险：{}", entry.permissions)))
         .child(text(format!("兼容格式：{}", entry.compatible_format)))
         .child(text(format!("许可证：{}", entry.license)))
         .child(text(format!("说明：{}", entry.notes)))
+        .child(controls)
+        .child(text(move || action_message.get()))
+}
+
+fn format_installed_version(record: &store::InstalledPlugin) -> String {
+    format!(
+        "当前版本：{}（内容校验：{}）",
+        record.version,
+        record.short_hash()
+    )
+}
+
+fn status_summary(inspect_result: Option<&Result<InstallStatus, String>>) -> (String, String) {
+    match inspect_result {
+        None => (
+            "安装状态：当前环境不可管理本机插件目录".into(),
+            "当前版本：未安装".into(),
+        ),
+        Some(Err(error)) => (
+            format!("安装状态：校验失败（{error}）"),
+            "当前版本：未知".into(),
+        ),
+        Some(Ok(InstallStatus::NotInstalled)) => {
+            ("安装状态：未安装".into(), "当前版本：未安装".into())
+        }
+        Some(Ok(InstallStatus::Installed(record))) => {
+            ("安装状态：已安装".into(), format_installed_version(record))
+        }
+        Some(Ok(InstallStatus::Corrupted {
+            record,
+            missing_files,
+        })) => (
+            format!("安装状态：文件不完整（缺少 {}）", missing_files.join("、")),
+            format_installed_version(record),
+        ),
+    }
+}
+
+fn management_controls(
+    plugins_root: Option<PathBuf>,
+    entry: &PluginEntry,
+    inspect_result: Option<&Result<InstallStatus, String>>,
+    source_input: Signal<String>,
+    action_message: Signal<String>,
+    status_revision: Signal<u64>,
+) -> View {
+    let Some(root) = plugins_root else {
+        return view();
+    };
+    let is_installed = matches!(inspect_result, Some(Ok(InstallStatus::Installed(_))));
+    let is_corrupted = matches!(inspect_result, Some(Ok(InstallStatus::Corrupted { .. })));
+    let can_uninstall = !matches!(inspect_result, Some(Ok(InstallStatus::NotInstalled)));
+
+    let mut row = view().flex_row().flex_wrap().gap_2();
+    if is_installed {
+        row = row.child(update_button(
+            root.clone(),
+            entry.clone(),
+            source_input,
+            action_message,
+            status_revision,
+        ));
+    } else {
+        row = row.child(install_button(
+            root.clone(),
+            entry.clone(),
+            is_corrupted,
+            source_input,
+            action_message,
+            status_revision,
+        ));
+    }
+    if can_uninstall {
+        row = row.child(uninstall_button(
+            root,
+            entry.clone(),
+            action_message,
+            status_revision,
+        ));
+    }
+
+    view()
+        .gap_2()
+        .child(text("本地插件来源目录（手动安装与更新）："))
+        .child(
+            input()
+                .test_id("plugin-source-dir")
+                .label("本地插件来源目录")
+                .h_10()
+                .px_3()
+                .bg(AdaptiveColor::rgb(0x00e0_e8da, 0x002a_473d))
+                .placeholder(r"例如 C:\softwares\FufuLauncher\Plugins\FuFuPlugin")
+                .value(move || source_input.get())
+                .on_change(move |value: &str| source_input.set(value.to_owned())),
+        )
+        .child(row)
+}
+
+fn install_button(
+    root: PathBuf,
+    entry: PluginEntry,
+    is_corrupted: bool,
+    source_input: Signal<String>,
+    action_message: Signal<String>,
+    status_revision: Signal<u64>,
+) -> impl IntoElement {
+    let label = if is_corrupted {
+        "重新安装"
+    } else {
+        "安装插件"
+    };
+    button(label, move || {
+        let source_text = source_input.get_untracked();
+        let source = Path::new(source_text.trim().trim_matches('"'));
+        match store::install(
+            &root,
+            &entry.install_subpath,
+            &entry.id,
+            &entry.version,
+            source,
+            &entry.required_files,
+        ) {
+            Ok(record) => {
+                action_message.set(format!(
+                    "已安装 {}（内容校验：{}）",
+                    entry.name,
+                    record.short_hash()
+                ));
+                status_revision.update(|rev| *rev += 1);
+            }
+            Err(error) => action_message.set(format!("安装失败：{error}")),
+        }
+    })
+}
+
+fn update_button(
+    root: PathBuf,
+    entry: PluginEntry,
+    source_input: Signal<String>,
+    action_message: Signal<String>,
+    status_revision: Signal<u64>,
+) -> impl IntoElement {
+    button("检查并更新", move || {
+        let source_text = source_input.get_untracked();
+        let source = Path::new(source_text.trim().trim_matches('"'));
+        match store::update(
+            &root,
+            &entry.install_subpath,
+            &entry.id,
+            &entry.version,
+            source,
+            &entry.required_files,
+        ) {
+            Ok(UpdateOutcome::UpToDate(record)) => {
+                action_message.set(format!(
+                    "已是最新版本，无需更新（内容校验：{}）",
+                    record.short_hash()
+                ));
+            }
+            Ok(UpdateOutcome::Updated(record)) => {
+                action_message.set(format!(
+                    "已更新 {}（内容校验：{}）",
+                    entry.name,
+                    record.short_hash()
+                ));
+                status_revision.update(|rev| *rev += 1);
+            }
+            Err(error) => action_message.set(format!("更新失败：{error}")),
+        }
+    })
+}
+
+fn uninstall_button(
+    root: PathBuf,
+    entry: PluginEntry,
+    action_message: Signal<String>,
+    status_revision: Signal<u64>,
+) -> impl IntoElement {
+    button("卸载插件", move || {
+        match store::uninstall(
+            &root,
+            &entry.install_subpath,
+            &entry.id,
+            &entry.required_files,
+        ) {
+            Ok(()) => {
+                action_message.set(format!("已卸载 {}", entry.name));
+                status_revision.update(|rev| *rev += 1);
+            }
+            Err(error) => action_message.set(format!("卸载失败：{error}")),
+        }
+    })
 }
 
 #[cfg(test)]
@@ -285,8 +553,23 @@ mod tests {
         );
         assert_eq!(entry.commit, "1830f9d770ecb9c895ba98b9a933973eabe36e7a");
         assert_eq!(entry.install_subpath, "fufu-unlocker-island");
+        assert_eq!(
+            entry.default_local_source,
+            r"C:\softwares\FufuLauncher\Plugins\FuFuPlugin"
+        );
+        assert_eq!(
+            entry.required_files,
+            vec![
+                "FufuLauncher.UnlockerIsland.dll".to_owned(),
+                "config.ini".to_owned()
+            ]
+        );
         assert!(entry.permissions.contains("管理员权限"));
-        assert!(entry.compatible_format.contains("Launcher_2.exe"));
+        assert!(
+            entry
+                .compatible_format
+                .contains("FufuLauncher.UnlockerIsland.dll")
+        );
         assert!(entry.license.contains("AGPL-3.0"));
         Ok(())
     }

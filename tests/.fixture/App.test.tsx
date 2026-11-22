@@ -846,8 +846,11 @@ test("browses the curated plugin catalog and reports load failures clearly", asy
   expect(app.texts()).toContain("类型：游戏注入模块");
   expect(app.texts()).toContain("版本：1830f9d7（2026-11-18 固定提交）");
   expect(app.texts()).toContain("来源：https://github.com/FufuLauncher/FufuLauncher.UnlockerIsland");
-  expect(app.texts().map(text => text.replaceAll("\\", "/")))
-    .toContain("安装位置：C:/Genshin-Go-Fixture/plugins/fufu-unlocker-island");
+  expect(
+    app.texts()
+      .map(text => text.replaceAll("\\", "/"))
+      .some(line => line.startsWith("安装位置：") && line.endsWith("/fufu-unlocker-island")),
+  ).toBe(true);
 
   await app.press("模拟插件目录加载失败");
   await app.press("重新加载目录");
