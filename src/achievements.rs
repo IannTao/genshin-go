@@ -181,11 +181,7 @@ pub(crate) fn section(
     profile: Signal<Profile>,
     revision: Signal<u64>,
 ) -> View {
-    let content = view().gap_4().child(
-        text("成就进度")
-            .text_size(px(24.0))
-            .font_weight(FontWeight::BOLD),
-    );
+    let content = view().gap_4();
     let database = match database {
         Ok(path) => Rc::new(path),
         Err(error) => return content.child(text(error)),

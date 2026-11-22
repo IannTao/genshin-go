@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Renders the overall backup and restore controls on the UID spaces page.
+/// Renders the overall backup and restore controls in System Settings.
 pub(crate) fn section(
     path: Result<PathBuf, String>,
     profile: nsh_core::prelude::Signal<Profile>,

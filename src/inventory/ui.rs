@@ -14,30 +14,17 @@ use std::{path::PathBuf, rc::Rc};
 
 const PAGE_SIZE: usize = 30;
 
-/// Adds the expandable inventory browser and import controls to the UID page.
+/// Renders the inventory browser and import controls for the selected UID.
 pub(super) fn section(
     environment: Rc<dyn LauncherEnvironment>,
     database: Result<PathBuf, String>,
     profile: Signal<Profile>,
     revision: Signal<u64>,
 ) -> View {
-    let expanded = signal(false);
-    view()
-        .gap_2()
-        .child(button("背包仓库", move || {
-            expanded.update(|open| *open = !*open);
-        }))
-        .child(dynamic(move || {
-            expanded.get().then(|| match &database {
-                Ok(path) => warehouse(
-                    environment.clone(),
-                    Rc::new(path.clone()),
-                    profile,
-                    revision,
-                ),
-                Err(error) => view().child(text(error.clone())),
-            })
-        }))
+    match database {
+        Ok(path) => warehouse(environment, Rc::new(path), profile, revision),
+        Err(error) => view().child(text(error)),
+    }
 }
 
 fn warehouse(

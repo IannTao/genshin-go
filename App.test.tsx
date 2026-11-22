@@ -6,6 +6,20 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("navigates the nine workbench pages from the sidebar", async () => {
+  const app = await open(".", { width: 1040, height: 720 });
+  const pages = ["首页", "游戏管理", "米游社", "角色资料", "祈愿分析", "背包仓库", "成就管理", "扩展", "系统设置"];
+  expect(app.texts().filter(text => pages.includes(text))).toEqual([...pages, "首页"]);
+  for (const page of pages) {
+    await app.press(`id:launcher-sidebar >> text:${page}`);
+    expect(app.shows(`id:launcher-page-title >> text:${page}`)).toBe(true);
+    for (const item of pages) {
+      expect(app.spanStyle(`id:launcher-sidebar >> text:${item}`).fontWeight)
+        .toBe(item === page ? 700 : 400);
+    }
+  }
+});
+
 windowsTest("uses the selected UID's imported stock for character growth", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");
@@ -16,7 +30,7 @@ windowsTest("uses the selected UID's imported stock for character growth", async
   await app.press("读取 GOOD 文件");
   await app.press("预览背包导入至 UID 123450231");
   await app.press("备份并确认完整导入");
-  await app.press("背包仓库");
+  await app.press("角色资料");
   await app.press("角色养成计划");
   await app.type("growth-search", "安柏");
   await app.press("规划安柏");
@@ -67,20 +81,24 @@ windowsTest("uses the latest complete imported stock for weapon growth", async (
   await app.press("读取 GOOD 文件");
   await app.press("预览背包导入至 UID 123450233");
   await app.press("备份并确认完整导入");
+  await app.press("角色资料");
   await app.press("使用导入库存");
   await app.waitFor("导入库存采集时间：2026-10-10T07:50:00+08:00");
   expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 0 · 缺口 2");
 
+  await app.press("背包仓库");
   await app.clear("inventory-file");
   await app.type("inventory-file", "tests/data/inventory-good-growth.json");
   await app.press("读取 GOOD 文件");
   await app.press("预览背包导入至 UID 123450233");
   await app.press("备份并确认完整导入");
+  await app.press("角色资料");
   await app.waitFor("导入库存采集时间：2026-10-11T08:00:00+08:00");
   expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 1 · 缺口 1");
   expect(app.texts()).toContain("摩拉 · 需求 11080 · 导入库存 30000 · 缺口 0");
   expect(app.texts()).toContain("强化矿折算 · 需求 60800 · 缺口 0");
 
+  await app.press("背包仓库");
   await app.clear("inventory-file");
   await app.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
   await app.press("读取 GOOD 文件");
@@ -88,6 +106,7 @@ windowsTest("uses the latest complete imported stock for weapon growth", async (
   await app.press("预览背包导入至 UID 123450233");
   await app.waitFor("这份快照较旧，导入后可在历史中主动选择。");
   await app.press("备份并确认完整导入");
+  await app.press("角色资料");
   expect(app.texts()).toContain("导入库存采集时间：2026-10-11T08:00:00+08:00");
   expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 1 · 缺口 1");
 }, 60000);
@@ -448,8 +467,10 @@ windowsTest("keeps older inventory selectable and reopens separate UID inventori
   await app.press("材料");
   expect(app.texts()).toContain("SlimeCondensate · 数量 81");
 
+  await app.press("角色资料");
   await app.type("game-uid", "123450122");
   await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
   await app.press("预览背包导入至 UID 123450122");
   await app.press("备份并确认完整导入");
   const reopened = await open(".", { width: 1024, height: 1000 });
@@ -458,15 +479,21 @@ windowsTest("keeps older inventory selectable and reopens separate UID inventori
   await reopened.press("材料");
   expect(reopened.texts()).toContain("UID 123450122 的背包仓库");
   expect(reopened.texts()).toContain("SlimeCondensate · 数量 81");
+  await reopened.press("角色资料");
   await reopened.press("切换至 UID：123450121");
+  await reopened.press("背包仓库");
   await reopened.press("材料");
   expect(reopened.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
   expect(reopened.texts()).toContain("SlimeCondensate · 数量 3");
+  await reopened.press("角色资料");
   await reopened.press("资料管理");
   reopened.onDialog(() => "确认删除 UID：123450121");
   await reopened.press("删除历史记录");
+  await reopened.press("背包仓库");
   await reopened.waitFor("暂无背包快照");
+  await reopened.press("角色资料");
   await reopened.press("切换至 UID：123450122");
+  await reopened.press("背包仓库");
   await reopened.press("材料");
   expect(reopened.texts()).toContain("SlimeCondensate · 数量 81");
 }, 60000);
@@ -496,7 +523,9 @@ windowsTest("uses the incomplete-category confirmation and preserves the UID and
   await app.press("预览背包导入至 UID 123450123");
   await app.press("备份并确认完整导入");
   expect(app.texts()).toContain("暂无背包快照");
+  await app.press("角色资料");
   await app.press("切换至 UID：123450123");
+  await app.press("背包仓库");
   expect(app.texts()).toContain("采集时间：2026-10-14T19:06:40.123Z");
   await app.press("圣遗物");
   expect(app.texts().join("\n")).toContain("GladiatorsFinale");
@@ -519,12 +548,13 @@ windowsTest("restores all portable UID data from an overall backup", async () =>
   await app.press("角色资料");
   await app.type("game-uid", "123450020");
   await app.press("创建 UID 数据空间");
+  await app.press("祈愿分析");
   await app.type("uigf-file", "tests/data/uigf-v4.2.json");
   await app.press("读取 UIGF 文件");
   await app.press("备份并确认导入");
   const wish = "2025-10-09 08:00:00 · 角色活动祈愿 · 神里绫华 · 5 星";
   await app.waitFor(wish);
-  await app.press("成就");
+  await app.press("成就管理");
   await app.press("标记完成：风与异乡人（80001）");
 
   await app.press("角色资料");
@@ -551,23 +581,27 @@ windowsTest("restores all portable UID data from an overall backup", async () =>
   await app.press("预览背包导入至 UID 123450020");
   await app.press("备份并确认完整导入");
 
+  await app.press("系统设置");
   await app.press("备份与恢复");
   await app.press("创建整体备份");
   const backup = app.texts().find((line) => line.startsWith("已创建整体备份："));
   expect(backup).toBeDefined();
   const path = backup?.slice("已创建整体备份：".length) ?? "";
 
+  await app.press("角色资料");
   await app.press("资料管理");
   app.onDialog(() => "确认删除 UID：123450020");
   await app.press("删除历史记录");
   await app.waitFor("已清除 UID 123450020 的本机历史记录");
 
+  await app.press("背包仓库");
   await app.clear("inventory-file");
   await app.type("inventory-file", "tests/data/inventory-good-newer.json");
   await app.press("读取 GOOD 文件");
   await app.press("预览背包导入至 UID 123450020");
   await app.press("备份并确认完整导入");
 
+  await app.press("系统设置");
   await app.type("restore-file", path);
   await app.press("预览恢复");
   expect(app.texts()).toContain("UID 123450020 · 祈愿新增 1，重复 0，冲突 0");
@@ -576,19 +610,25 @@ windowsTest("restores all portable UID data from an overall backup", async () =>
   expect(app.texts()).toContain("UID 123450020 · 武器计划新增 1，重复 0，冲突 0");
   expect(app.texts()).toContain("UID 123450020 · 背包快照新增 1，重复 0，冲突 0");
   expect(app.texts()).toContain("恢复后默认采集时间：2026-10-10T07:50:00+08:00");
+  await app.press("祈愿分析");
   expect(app.texts()).toContain("暂无祈愿记录");
-  expect(app.texts()).toContain("暂无武器养成计划");
-  expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
-  await app.press("成就");
-  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
   await app.press("角色资料");
+  expect(app.texts()).toContain("暂无武器养成计划");
+  await app.press("背包仓库");
+  expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
+  await app.press("成就管理");
+  expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
+  await app.press("系统设置");
   await app.press("备份并确认恢复");
   expect(app.texts().join("\n")).toContain("恢复完成。恢复前备份：");
+  await app.press("祈愿分析");
   await app.waitFor(wish);
+  await app.press("角色资料");
   await app.press("查看白缨枪的计划（等级 1 → 3）");
   await app.press("角色养成计划");
   await app.press("查看安柏的计划（等级 1 → 2）");
   expect(app.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
+  await app.press("背包仓库");
   await app.press("材料");
   expect(app.texts()).toContain("采集时间：2026-10-10T07:50:00+08:00");
   expect(app.texts()).toContain("SlimeCondensate · 数量 3");
@@ -601,11 +641,12 @@ windowsTest("restores all portable UID data from an overall backup", async () =>
   expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
   await app.press("圣遗物");
   expect(app.texts().join("\n")).toContain("GladiatorsFinale");
+  await app.press("系统设置");
   await app.press("预览恢复");
   expect(app.texts()).toContain("UID 123450020 · 祈愿新增 0，重复 1，冲突 0");
   expect(app.texts()).toContain("没有需要恢复的变更");
   expect(app.texts()).not.toContain("备份并确认恢复");
-  await app.press("成就");
+  await app.press("成就管理");
   expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
 }, 60000);
 
@@ -627,12 +668,14 @@ windowsTest("requires an explicit version for each conflicting growth plan or ma
   await app.clear("weapon-growth-target-level");
   await app.type("weapon-growth-target-level", "2");
   await app.press("保存养成计划");
+  await app.press("系统设置");
   await app.press("备份与恢复");
   await app.press("创建整体备份");
   const prefix = "已创建整体备份：";
   const path = app.texts().find((line) => line.startsWith(prefix))?.slice(prefix.length) ?? "";
   expect(path.length).toBeGreaterThan(0);
 
+  await app.press("角色资料");
   await app.clear("weapon-growth-target-level");
   await app.type("weapon-growth-target-level", "3");
   await app.press("保存养成计划");
@@ -645,6 +688,7 @@ windowsTest("requires an explicit version for each conflicting growth plan or ma
   await app.press("保存养成计划");
   await app.waitFor("查看安柏的计划（等级 1 → 3）");
 
+  await app.press("系统设置");
   await app.type("restore-file", path);
   await app.press("预览恢复");
   expect(app.texts()).toContain("UID 123450024 · 角色计划新增 0，重复 0，冲突 1");
@@ -655,6 +699,7 @@ windowsTest("requires an explicit version for each conflicting growth plan or ma
   expect(app.texts()).not.toContain("备份并确认恢复");
   await app.press("使用备份 · UID 123450024 · 手填库存 流浪者的经验（材料 104001）");
   await app.press("备份并确认恢复");
+  await app.press("角色资料");
   await app.press("查看安柏的计划（等级 1 → 2）");
   expect(app.texts()).toContain("经验书折算 · 需求 1000 · 缺口 0");
   await app.press("武器养成计划");
@@ -663,15 +708,18 @@ windowsTest("requires an explicit version for each conflicting growth plan or ma
 
 windowsTest("previews and creates a missing UID from an overall backup", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
-  await app.press("角色资料");
+  await app.press("系统设置");
   await app.press("备份与恢复");
   await app.type("restore-file", "tests/data/uid-backup-v1.json");
   await app.press("预览恢复");
   await app.waitFor("新建 UID 数据空间：123450022");
+  await app.press("角色资料");
   expect(app.texts()).not.toContain("切换至 UID：123450022");
   expect(app.texts()).not.toContain("当前游戏 UID：123450022");
+  await app.press("系统设置");
   await app.press("备份并确认恢复");
 
+  await app.press("角色资料");
   if (app.texts().includes("切换至 UID：123450022")) {
     await app.press("切换至 UID：123450022");
   }
@@ -690,9 +738,9 @@ test("opens the launcher home and reaches installation controls", async () => {
 
 windowsTest("opens a separate achievement tab from the launcher sidebar", async () => {
   const app = await open(".");
-  await app.press("成就");
-  expect(app.texts()).toContain("成就进度");
-  expect(app.texts()).not.toContain("祈愿记录");
+  await app.press("成就管理");
+  expect(app.texts()).toContain("读取 UIAF 文件");
+  expect(app.texts()).not.toContain("读取 UIGF 文件");
 });
 
 windowsTest("saves and clears manual achievement progress by UID without authorization", async () => {
@@ -700,7 +748,7 @@ windowsTest("saves and clears manual achievement progress by UID without authori
   await app.press("角色资料");
   await app.type("game-uid", "123450017");
   await app.press("创建 UID 数据空间");
-  await app.press("成就");
+  await app.press("成就管理");
   expect(app.texts()).toContain("成就目录 · 原神 7.2");
   expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
   await app.press("标记完成：风与异乡人（80001）");
@@ -710,13 +758,13 @@ windowsTest("saves and clears manual achievement progress by UID without authori
   await app.type("game-uid", "123450117");
   await app.press("创建 UID 数据空间");
   const reopened = await open(".");
-  await reopened.press("成就");
+  await reopened.press("成就管理");
   expect(reopened.texts()).toContain("UID 123450117 的成就进度");
   expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
   await reopened.press("标记完成：风与异乡人（80001）");
   await reopened.press("角色资料");
   await reopened.press("切换至 UID：123450017");
-  await reopened.press("成就");
+  await reopened.press("成就管理");
   expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
   await reopened.press("取消完成：风与异乡人（80001）");
   expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成 · 进度未记录");
@@ -727,11 +775,11 @@ windowsTest("saves and clears manual achievement progress by UID without authori
   reopened.onDialog(() => "确认删除 UID：123450017");
   await reopened.press("删除历史记录");
   await reopened.waitFor("已清除 UID 123450017 的本机历史记录");
-  await reopened.press("成就");
+  await reopened.press("成就管理");
   expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 未完成");
   await reopened.press("角色资料");
   await reopened.press("切换至 UID：123450117");
-  await reopened.press("成就");
+  await reopened.press("成就管理");
   expect(reopened.texts()).toContain("风与异乡人 · 成就 80001 · 已完成 · 进度未记录");
 });
 
@@ -740,7 +788,7 @@ windowsTest("browses the achievement catalog and searches by name or ID", async 
   await app.press("角色资料");
   await app.type("game-uid", "123450217");
   await app.press("创建 UID 数据空间");
-  await app.press("成就");
+  await app.press("成就管理");
   await app.press("下一页");
   expect(app.texts()).toContain("已完成 0 项 · 共 1909 项 · 第 2/64 页");
   await app.type("achievement-search", "寒冬的冒险家");
@@ -759,7 +807,7 @@ windowsTest("previews and imports UIAF into an explicitly selected UID", async (
   await app.press("创建 UID 数据空间");
   await app.type("game-uid", "123450019");
   await app.press("创建 UID 数据空间");
-  await app.press("成就");
+  await app.press("成就管理");
   await app.type("uiaf-file", "tests/data/uiaf-v1.1.json");
   await app.press("读取 UIAF 文件");
   expect(app.texts()).toContain("文件未声明 UID，请选择导入目标");
@@ -772,7 +820,7 @@ windowsTest("previews and imports UIAF into an explicitly selected UID", async (
   expect(app.texts()).toContain("暂无成就进度");
   await app.press("角色资料");
   await app.press("切换至 UID：123450018");
-  await app.press("成就");
+  await app.press("成就管理");
   expect(app.texts()).toContain("风与异乡人 · 成就 80001 · 已领取 · 进度 1");
   expect(app.texts()).toContain("千嶂万仞 · 成就 80002 · 未完成 · 进度 30");
   await app.press("预览导入至 UID 123450018");

@@ -60,6 +60,7 @@ for (const [action, result] of [
     expect(app.texts()).toContain("游戏启动次数：1");
     await app.press(action);
     await app.waitFor(result);
+    expect(app.texts()).toContain("游戏启动次数：1");
     expect(app.texts()).toContain("扫描器关闭请求：1");
   }, 30000);
 }
@@ -219,7 +220,7 @@ windowsTest("syncs growth materials from MiYouShe for the authorized UID while p
   await app.press("模拟扫码确认");
   await app.waitFor("米游社授权已保存");
 
-  await app.press("角色资料");
+  await app.press("背包仓库");
   await app.press("从米游社同步材料");
   await app.waitUntil(() => app.texts().some(line => line.startsWith("已从米游社同步 UID 123456789 的 2 种材料。同步前备份：")));
   await app.press("材料");
@@ -229,6 +230,7 @@ windowsTest("syncs growth materials from MiYouShe for the authorized UID while p
   await app.press("武器");
   expect(app.texts().join("\n")).toContain("DullBlade · 等级 20");
 
+  await app.press("角色资料");
   await app.press("角色养成计划");
   await app.type("growth-search", "安柏");
   await app.press("规划安柏");
@@ -242,6 +244,7 @@ windowsTest("syncs growth materials from MiYouShe for the authorized UID while p
   expect(app.texts()).toContain("摩拉 · 需求 20000 · 导入库存 250000 · 缺口 0");
   expect(app.texts()).toContain("小灯草 · 需求 3 · 导入库存 2 · 缺口 1");
 
+  await app.press("背包仓库");
   await app.press("模拟米游社材料同步失败");
   await app.press("从米游社同步材料");
   await app.waitFor("米游社材料同步失败：米游社授权已失效，请重新扫码");
@@ -254,8 +257,10 @@ windowsTest("syncs growth materials from MiYouShe for the authorized UID while p
   await app.press("材料");
   expect(app.texts()).toContain("SmallLampGrass · 数量 15");
 
+  await app.press("角色资料");
   await app.type("game-uid", "987654321");
   await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
   expect(app.texts()).not.toContain("从米游社同步材料");
 
   await app.press("重新打开启动器");

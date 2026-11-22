@@ -50,7 +50,7 @@ pub(crate) async fn sync_mihoyo_materials(
     mihoyo::fetch_materials(path, account).await
 }
 
-/// Renders the inventory warehouse within the UID data spaces page.
+/// Renders the warehouse and import controls for the selected UID.
 pub(crate) fn section(
     environment: Rc<dyn LauncherEnvironment>,
     path: Result<PathBuf, String>,

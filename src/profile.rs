@@ -43,51 +43,23 @@ pub(crate) fn spaces(
     environment: Rc<dyn LauncherEnvironment>,
     profile: Signal<Profile>,
     history_revision: Signal<u64>,
+    growth_revision: Signal<u64>,
+    load_error: Option<String>,
     roster: Option<impl IntoElement>,
+    growth: Option<View>,
 ) -> impl IntoElement {
     let message = signal(String::new());
     let managing = signal(false);
-    let growth_revision = signal(0_u64);
     let switch = environment.clone();
-    #[cfg(target_os = "windows")]
-    let local_records = environment.uid_database_path().map(|path| {
-        view()
-            .gap_2()
-            .child(crate::inventory::section(
-                environment.clone(),
-                path.clone(),
-                profile,
-                history_revision,
-            ))
-            .child(crate::growth::section(
-                path.clone(),
-                profile,
-                growth_revision,
-                history_revision,
-            ))
-            .child(crate::backup::section(
-                path.clone(),
-                profile,
-                history_revision,
-                growth_revision,
-            ))
-            .child(crate::wishes::section(path, profile, history_revision))
-    });
-    #[cfg(not(target_os = "windows"))]
-    let local_records = None::<View>;
     view()
         .gap_2()
+        .child(load_error.map(text))
         .child(
             view()
                 .flex_row()
                 .flex_wrap()
                 .items_center()
                 .gap_2()
-                .child(
-                    text("角色资料")
-                        .text_size(px(24.0))
-                        .font_weight(FontWeight::BOLD),
-                )
                 .child(text(move || {
                     profile.get().active_uid.map_or_else(
                         || "尚未选择游戏 UID".into(),
@@ -133,7 +105,7 @@ pub(crate) fn spaces(
         ))
         .child(text(move || message.get()))
         .child(roster)
-        .child(local_records)
+        .child(growth)
 }
 
 fn uid_creation(

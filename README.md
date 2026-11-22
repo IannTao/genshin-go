@@ -2,6 +2,9 @@
 
 On Windows, use **首页** to confirm an existing installation and launch the game. **管理游戏** opens **游戏管理** for directory changes and downloads. Open **米游社** for account authorization and community sign-in, or **角色资料** to manage local UID data spaces.
 
+Open **祈愿分析**, **背包仓库**, or **成就管理** from the sidebar to work with data for the
+selected UID. Open **系统设置 → 备份与恢复** to move data across installations.
+
 ## Windows curated plugin catalog
 
 Open **扩展** to browse and manage the curated plugin catalog maintained by Genshin-Go.
@@ -42,7 +45,7 @@ source time and local receipt time. **停用下次启动同步** disables future
 
 ## Windows achievement progress
 
-Create or switch UID data spaces in **角色资料**, then open **成就** to browse the offline
+Create or switch UID data spaces in **角色资料**, then open **成就管理** to browse the offline
 Simplified Chinese achievement catalog. Search by name or ID and use **标记完成** or
 **取消完成** to update the selected UID's completion status. Multi-stage achievements
 show the stage and its target value. Changes are saved in
@@ -64,7 +67,7 @@ value.
 
 ## Windows backup and restore
 
-Open **角色资料 → 备份与恢复** and choose **创建整体备份**. Copy the displayed JSON file
+Open **系统设置 → 备份与恢复** and choose **创建整体备份**. Copy the displayed JSON file
 from `uid-backups` in the launcher data directory to the new computer. The file
 contains all UID data spaces, wish records, achievement progress, character and
 weapon growth plans, manual material quantities, and inventory snapshot
@@ -88,7 +91,7 @@ UID if there is one. Use the UIGF and UIAF controls for standard exchange files.
 
 ## Windows inventory snapshots
 
-Open **角色资料 → 背包仓库** to browse weapons, artifacts and materials for the
+Open **背包仓库** to browse weapons, artifacts and materials for the
 selected game UID. Select a category to see its latest available snapshot. Use **背包快照历史**
 to view an older snapshot. Each view shows the original collection time and
 the inventory from that snapshot.

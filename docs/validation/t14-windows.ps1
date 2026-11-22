@@ -29,11 +29,26 @@ import { expect, open, test } from "nsh/test";
 test("Windows wish records", async () => {
   const app = await open("../../../nsh.json", { width: 1024, height: 1000 });
   const paths: Record<string, string> = $pathsJson;
-  await app.press("角色资料");
+  await app.press("祈愿分析");
   await app.waitFor("祈愿记录");
   const create = async (uid: string) => {
+    await app.press("角色资料");
     await app.type("game-uid", uid);
     await app.press("创建 UID 数据空间");
+    await app.press("祈愿分析");
+  };
+  const select = async (uid: string) => {
+    await app.press("角色资料");
+    await app.press("切换至 UID：" + uid);
+    await app.press("祈愿分析");
+  };
+  const removeHistory = async (uid: string) => {
+    await app.press("角色资料");
+    await app.press("资料管理");
+    app.onDialog(() => "确认删除 UID：" + uid);
+    await app.press("删除历史记录");
+    await app.waitFor("已清除 UID " + uid + " 的本机历史记录");
+    await app.press("祈愿分析");
   };
   const read = async (path: string) => {
     await app.clear("uigf-file");
@@ -116,7 +131,7 @@ try {
     Remove-Item -LiteralPath $blockedBackup
 
     Invoke-WishTest $paths @'
-  await app.waitFor("当前游戏 UID：123456789");
+  await app.waitFor("UID 123456789 的祈愿记录");
   await read(paths.initial);
   await app.waitFor("导入至 UID 123456789：新增 1，重复 0，冲突 0");
   await app.waitFor("暂无祈愿记录");
@@ -169,9 +184,9 @@ try {
     if (($backupCounts -join ',') -ne '0,1') { throw '两次备份应分别包含零条和一条导入前记录' }
 
     Invoke-WishTest $paths @'
-  await app.waitFor("当前游戏 UID：987654321");
+  await app.waitFor("UID 987654321 的祈愿记录");
   await app.waitFor("共 1 条 · 第 1 页 · 时间 UTC");
-  await app.press("切换至 UID：123456789");
+  await select("123456789");
   await app.waitFor("共 2 条 · 第 1 页 · 时间 UTC");
   await read(paths.exported);
   await app.press("预览导入至 UID 123456789");
@@ -191,16 +206,14 @@ try {
   await app.waitFor("导入至 UID 123456789：新增 0，重复 0，冲突 2");
   await app.waitFor("共 2 条 · 第 1 页 · 时间 UTC");
 
-  await app.press("资料管理");
-  app.onDialog(() => "确认删除 UID：123456789");
-  await app.press("删除历史记录");
+  await removeHistory("123456789");
   await app.waitFor("暂无祈愿记录");
   await read(paths.exported);
   await app.press("预览导入至 UID 123456789");
   await app.waitFor("导入至 UID 123456789：新增 2，重复 0，冲突 0");
   await app.press("备份并确认导入");
   await app.waitFor("共 2 条 · 第 1 页 · 时间 UTC");
-  await app.press("切换至 UID：987654321");
+  await select("987654321");
   await app.waitFor("共 1 条 · 第 1 页 · 时间 UTC");
 '@
 
@@ -264,14 +277,12 @@ try {
   expect(app.texts()).not.toContain("备份并确认导入");
   for (const line of expected) expect(app.texts()).toContain(line);
 
-  await app.press("切换至 UID：987654321");
+  await select("987654321");
   await app.waitFor("UID 987654321 的祈愿统计");
   await app.waitFor("五星保底估算 · 已累计 0 / 90 抽 · 最多再抽 90 次");
   for (const line of expected) expect(app.texts()).not.toContain(line);
-  await app.press("切换至 UID：234567890");
-  await app.press("资料管理");
-  app.onDialog(() => "确认删除 UID：234567890");
-  await app.press("删除历史记录");
+  await select("234567890");
+  await removeHistory("234567890");
   await app.waitFor("暂无祈愿记录");
   for (const line of expected) expect(app.texts()).not.toContain(line);
 '@

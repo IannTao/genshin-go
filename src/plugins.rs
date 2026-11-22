@@ -163,11 +163,6 @@ pub(crate) fn section(environment: Rc<dyn LauncherEnvironment>) -> View {
 
     view()
         .gap_3()
-        .child(
-            text("扩展")
-                .text_size(px(24.0))
-                .font_weight(FontWeight::BOLD),
-        )
         .child(text(
             "本项目维护的精选插件目录，仅展示已核实条目，不开放任意第三方商店源。",
         ))

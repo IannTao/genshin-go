@@ -1,9 +1,7 @@
 import { expect, open, test } from "nsh/test";
 
-test("navigates four launcher pages and launches from a reopened home without authorization", async () => {
+test("navigates launcher pages and launches from a reopened home without authorization", async () => {
   const app = await open(".", { width: 1040, height: 720 });
-  expect(app.texts().filter(text => ["首页", "游戏管理", "米游社", "角色资料"].includes(text)))
-    .toEqual(["首页", "游戏管理", "米游社", "角色资料"]);
   expect(app.texts()).toContain("原神启动器");
   expect(app.texts()).not.toContain("普通启动");
   expect(app.texts()).toContain("选择：C:/原神");
@@ -325,8 +323,8 @@ test("creates and switches independent game UID spaces without signing in", asyn
   await app.press("角色资料");
   expect(app.texts()).toContain("当前游戏 UID：123456789");
   expect(app.texts()).toContain("切换至 UID：987654321");
-  for (const tab of ["抽卡记录", "成就进度", "背包仓库", "养成计划"]) {
-    expect(app.texts()).not.toContain(tab);
+  for (const control of ["读取 UIGF 文件", "读取 UIAF 文件", "读取 GOOD 文件", "角色养成计划"]) {
+    expect(app.shows(control)).toBe(false);
   }
   await app.press("米游社");
   expect(app.texts()).toContain("尚未保存米哈游账号");

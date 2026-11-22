@@ -292,19 +292,49 @@ enum Page {
     Game,
     Community,
     Profile,
+    #[cfg(target_os = "windows")]
+    Wishes,
+    #[cfg(target_os = "windows")]
+    Inventory,
+    #[cfg(target_os = "windows")]
     Achievements,
     Extensions,
+    #[cfg(target_os = "windows")]
+    Settings,
 }
 
 impl Page {
-    const ALL: [(Self, &'static str); 6] = [
-        (Self::Home, "首页"),
-        (Self::Game, "游戏管理"),
-        (Self::Community, "米游社"),
-        (Self::Profile, "角色资料"),
-        (Self::Achievements, "成就"),
-        (Self::Extensions, "扩展"),
+    const MAIN: &'static [Self] = &[
+        Self::Home,
+        Self::Game,
+        Self::Community,
+        Self::Profile,
+        #[cfg(target_os = "windows")]
+        Self::Wishes,
+        #[cfg(target_os = "windows")]
+        Self::Inventory,
+        #[cfg(target_os = "windows")]
+        Self::Achievements,
+        Self::Extensions,
     ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Home => "首页",
+            Self::Game => "游戏管理",
+            Self::Community => "米游社",
+            Self::Profile => "角色资料",
+            #[cfg(target_os = "windows")]
+            Self::Wishes => "祈愿分析",
+            #[cfg(target_os = "windows")]
+            Self::Inventory => "背包仓库",
+            #[cfg(target_os = "windows")]
+            Self::Achievements => "成就管理",
+            Self::Extensions => "扩展",
+            #[cfg(target_os = "windows")]
+            Self::Settings => "系统设置",
+        }
+    }
 }
 
 /// Renders the same launcher with either the Windows environment or a test host.
@@ -316,17 +346,13 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
         game_panel.scroll_to_offset(px(0.0), false);
     };
     let state = signal(find_installations(environment.as_ref()));
-    let (profile, profile_error) = match environment.load_profile() {
-        Ok(profile) => (profile, None),
-        Err(error) => (
-            crate::profile::Profile::default(),
-            Some(format!("读取本机数据失败：{error}")),
-        ),
-    };
-    let profile = signal(profile);
+    let (profile, profile_error) = load_profile(environment.as_ref());
     let history_revision = signal(0_u64);
+    let growth_revision = signal(0_u64);
     #[cfg(target_os = "windows")]
-    let scanner = environment.uid_database_path().map(|path| {
+    let database = environment.uid_database_path();
+    #[cfg(target_os = "windows")]
+    let scanner = database.clone().map(|path| {
         crate::scanner::Sync::new(path, environment.clone(), profile, history_revision)
     });
     let directory = DirectoryControls {
@@ -339,16 +365,6 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     let install = InstallSession::new(environment.clone(), move |path| set_default(state, path));
     let community = crate::accounts::community_page(environment.clone(), profile);
     #[cfg(target_os = "windows")]
-    let achievements = environment.uid_database_path().map(|database| {
-        panel(
-            page,
-            Page::Achievements,
-            crate::achievements::section(database, profile, history_revision),
-        )
-    });
-    #[cfg(not(target_os = "windows"))]
-    let achievements = None::<Scroll>;
-    #[cfg(target_os = "windows")]
     let (scanner_settings, roster) = (
         scanner.as_ref().map(crate::scanner::Sync::settings),
         scanner.as_ref().map(crate::scanner::Sync::roster),
@@ -356,18 +372,39 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
     #[cfg(not(target_os = "windows"))]
     let (scanner_settings, roster) = (None::<View>, None::<View>);
     let extensions = crate::plugins::section(environment.clone());
-    let uid_spaces = crate::profile::spaces(environment, profile, history_revision, roster);
+    #[cfg(target_os = "windows")]
+    let growth = database
+        .clone()
+        .map(|path| crate::growth::section(path, profile, growth_revision, history_revision));
+    #[cfg(not(target_os = "windows"))]
+    let growth = None::<View>;
+    let uid_spaces = crate::profile::spaces(
+        environment.clone(),
+        profile,
+        history_revision,
+        growth_revision,
+        profile_error.clone(),
+        roster,
+        growth,
+    );
+    #[cfg(target_os = "windows")]
+    let records = record_pages(
+        page,
+        environment,
+        database,
+        profile,
+        history_revision,
+        growth_revision,
+    );
+    #[cfg(not(target_os = "windows"))]
+    let records: [Scroll; 0] = [];
     view()
         .flex_1()
         .min_h(px(0.0))
         .flex_row()
         .bg(PAPER)
         .text_color(INK)
-        .child(sidebar(
-            page,
-            install.sidebar_status(open_install),
-            achievements.is_some(),
-        ))
+        .child(sidebar(page, install.sidebar_status(open_install)))
         .child(
             view()
                 .flex_1()
@@ -382,12 +419,7 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     panel(
                         page,
                         Page::Game,
-                        view()
-                            .gap_4()
-                            .child(install.details())
-                            .child(directory.management())
-                            .child(scanner_settings)
-                            .child(install.setup()),
+                        game_management(&directory, &install, scanner_settings),
                     )
                     .element_ref(&game_panel),
                 )
@@ -396,24 +428,103 @@ pub fn launcher(environment: Rc<dyn LauncherEnvironment>) -> impl IntoElement {
                     Page::Community,
                     view()
                         .gap_4()
-                        .child(profile_error.clone().map(text))
+                        .child(profile_error.map(text))
                         .child(community),
                 ))
-                .child(panel(
-                    page,
-                    Page::Profile,
-                    view()
-                        .gap_2()
-                        .child(profile_error.map(text))
-                        .child(uid_spaces),
-                ))
-                .child(achievements)
-                .child(panel(page, Page::Extensions, extensions)),
+                .child(panel(page, Page::Profile, uid_spaces))
+                .child(panel(page, Page::Extensions, extensions))
+                .children(records.into_iter().map(IntoElement::into_element)),
         )
 }
 
-fn sidebar(page: Signal<Page>, download_status: View, has_achievements: bool) -> View {
+fn load_profile(
+    environment: &dyn LauncherEnvironment,
+) -> (Signal<crate::profile::Profile>, Option<String>) {
+    match environment.load_profile() {
+        Ok(profile) => (signal(profile), None),
+        Err(error) => (
+            signal(crate::profile::Profile::default()),
+            Some(format!("读取本机数据失败：{error}")),
+        ),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn record_pages(
+    page: Signal<Page>,
+    environment: Rc<dyn LauncherEnvironment>,
+    database: Option<Result<PathBuf, String>>,
+    profile: Signal<crate::profile::Profile>,
+    history_revision: Signal<u64>,
+    growth_revision: Signal<u64>,
+) -> [Scroll; 4] {
+    let database = database.unwrap_or_else(|| Err("当前环境无法读取本机 UID 数据".into()));
+    let inventory_database = database.clone();
+    let inventory_opened = signal(false);
+    effect(move || {
+        if page.get() == Page::Inventory {
+            inventory_opened.set(true);
+        }
+    });
+    [
+        panel(
+            page,
+            Page::Wishes,
+            crate::wishes::section(database.clone(), profile, history_revision),
+        ),
+        panel(
+            page,
+            Page::Inventory,
+            when(
+                move || inventory_opened.get(),
+                move || {
+                    crate::inventory::section(
+                        environment.clone(),
+                        inventory_database.clone(),
+                        profile,
+                        history_revision,
+                    )
+                },
+            ),
+        ),
+        panel(
+            page,
+            Page::Achievements,
+            crate::achievements::section(database.clone(), profile, history_revision),
+        ),
+        panel(
+            page,
+            Page::Settings,
+            crate::backup::section(database, profile, history_revision, growth_revision),
+        ),
+    ]
+}
+
+fn game_management(
+    directory: &DirectoryControls,
+    install: &Rc<InstallSession>,
+    scanner_settings: Option<View>,
+) -> View {
     view()
+        .gap_4()
+        .child(install.details())
+        .child(directory.management())
+        .child(scanner_settings)
+        .child(install.setup())
+}
+
+fn sidebar(page: Signal<Page>, download_status: View) -> View {
+    #[cfg(target_os = "windows")]
+    let settings = Some(
+        view()
+            .gap_1()
+            .child(view().h(px(1.0)).bg(rgb(0x005c_8475)))
+            .child(page_button(page, Page::Settings)),
+    );
+    #[cfg(not(target_os = "windows"))]
+    let settings = None::<View>;
+    view()
+        .test_id("launcher-sidebar")
         .w(|| {
             px(if compact_window() {
                 70.0
@@ -435,31 +546,38 @@ fn sidebar(page: Signal<Page>, download_status: View, has_achievements: bool) ->
                 .font_weight(FontWeight::BOLD)
                 .style_when(compact_window, Styled::hidden),
         )
-        .children(
-            Page::ALL
-                .into_iter()
-                .filter(|(target, _)| *target != Page::Achievements || has_achievements)
-                .map(|(target, label)| {
-                    action_button(label, move || page.set(target))
-                        .py_1()
-                        .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
-                        .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
-                        .accessibility_state(move || AccessibilityState {
-                            selected: page.get() == target,
-                            ..Default::default()
-                        })
-                        .bg(move || {
-                            if page.get() == target {
-                                rgb(0x0037_6e5b)
-                            } else {
-                                rgb(SIDEBAR_BACKGROUND)
-                            }
-                        })
-                        .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
-                        .into_element()
-                }),
+        .child(
+            scroll().flex_1().min_h(px(0.0)).child(
+                view().gap_1().children(
+                    Page::MAIN
+                        .iter()
+                        .map(|&target| page_button(page, target).into_element()),
+                ),
+            ),
         )
         .child(download_status.hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND))))
+        .child(settings)
+}
+
+fn page_button(page: Signal<Page>, target: Page) -> View {
+    let selected = move || page.get() == target;
+    action_button(target.label(), move || page.set(target))
+        .py_1()
+        .px(|| px(if compact_window() { 3.0 } else { 8.0 }))
+        .text_size(|| px(if compact_window() { 12.0 } else { 14.0 }))
+        .style_when(selected, |style| style.font_weight(FontWeight::BOLD))
+        .accessibility_state(move || AccessibilityState {
+            selected: selected(),
+            ..Default::default()
+        })
+        .bg(move || {
+            if selected() {
+                rgb(0x0037_6e5b)
+            } else {
+                rgb(SIDEBAR_BACKGROUND)
+            }
+        })
+        .hover(|style| style.bg(rgb(SIDEBAR_HOVER_BACKGROUND)))
 }
 
 fn narrow_window() -> bool {
@@ -477,6 +595,14 @@ fn panel(page: Signal<Page>, target: Page, content: impl IntoElement) -> Scroll 
         .child(
             view()
                 .p(|| px(if narrow_window() { 12.0 } else { 28.0 }))
+                .gap_3()
+                .child(
+                    view().test_id("launcher-page-title").child(
+                        text(target.label())
+                            .text_size(px(24.0))
+                            .font_weight(FontWeight::BOLD),
+                    ),
+                )
                 .child(content.into_element()),
         )
 }
