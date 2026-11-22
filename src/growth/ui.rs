@@ -1,6 +1,6 @@
 use super::{
-    Catalog, Experience, Growth, Item, Kind, MaterialCounts, Plan, Progress, Requirements,
-    requirements, store, weapon,
+    Catalog, Experience, Growth, ImportedStock, Item, Kind, MaterialCounts, Plan, Progress,
+    Requirements, requirements, store, weapon,
 };
 use crate::{launcher::button, profile::Profile};
 use nsh_base::theme;
@@ -20,7 +20,8 @@ const PROGRESS_FIELDS: [(&str, &str); 5] = [
 pub(super) fn section(
     database: Result<PathBuf, String>,
     profile: Signal<Profile>,
-    revision: Signal<u64>,
+    plan_revision: Signal<u64>,
+    inventory_revision: Signal<u64>,
 ) -> View {
     let expanded = signal(None);
     let character_query = signal(String::new());
@@ -41,7 +42,7 @@ pub(super) fn section(
                 let Some(uid) = active_uid.get() else {
                     return view().child(text("请先创建或选择游戏 UID"));
                 };
-                revision.get();
+                plan_revision.get();
                 let query = match kind {
                     Kind::Character => character_query,
                     Kind::Weapon => weapon_query,
@@ -50,7 +51,9 @@ pub(super) fn section(
                     Ok((Catalog::load(kind)?, store::load(path, &uid, kind)?, path))
                 });
                 match data {
-                    Ok((catalog, saved, path)) => planner(kind, catalog, saved, path, &uid, query),
+                    Ok((catalog, saved, path)) => {
+                        planner(kind, catalog, saved, path, &uid, query, inventory_revision)
+                    }
                     Err(error) => view().child(text(error)),
                 }
             })
@@ -89,6 +92,7 @@ struct Planner {
     plans: Signal<BTreeMap<String, Plan>>,
     stock: Signal<MaterialCounts>,
     selected: Signal<Option<usize>>,
+    inventory_revision: Signal<u64>,
 }
 
 fn planner(
@@ -98,6 +102,7 @@ fn planner(
     path: &std::path::Path,
     uid: &str,
     query: Signal<String>,
+    inventory_revision: Signal<u64>,
 ) -> View {
     let planner = Planner {
         kind,
@@ -107,6 +112,7 @@ fn planner(
         plans: signal(saved.plans),
         stock: signal(saved.stock),
         selected: signal(None),
+        inventory_revision,
     };
     let edit = planner.clone();
     view()
@@ -229,6 +235,7 @@ struct Draft {
     current: Signal<[String; 5]>,
     target: Signal<[String; 5]>,
     stock_edits: Signal<BTreeMap<i32, String>>,
+    uses_imported: Signal<bool>,
     message: Signal<String>,
 }
 
@@ -246,10 +253,20 @@ fn editor(planner: &Planner, item: &'static Item) -> View {
         current: signal(display(plan.current)),
         target: signal(display(plan.target)),
         stock_edits: signal(BTreeMap::new()),
+        uses_imported: signal(false),
         message: signal(String::new()),
     };
     let preview = planner.clone();
     let selected = planner.selected;
+    let imported = computed({
+        let path = planner.path.clone();
+        let uid = planner.uid.clone();
+        let revision = planner.inventory_revision;
+        move || {
+            revision.get();
+            ImportedStock::load(&path, &uid).map(|stock| stock.map(Rc::new))
+        }
+    });
     view()
         .key(item.key.clone())
         .gap_2()
@@ -281,12 +298,21 @@ fn editor(planner: &Planner, item: &'static Item) -> View {
         }))
         .child(progress_fields("current", "当前", draft.current, draft))
         .child(progress_fields("target", "目标", draft.target, draft))
+        .child(dynamic(move || stock_source(draft, &imported.get())))
         .child(dynamic(move || {
+            let stock = if draft.uses_imported.get() {
+                let Ok(Some(imported)) = imported.get() else {
+                    return view();
+                };
+                Stock::Imported(imported)
+            } else {
+                Stock::Manual(preview.stock)
+            };
             match draft
                 .plan()
                 .and_then(|plan| requirements(preview.catalog, item, plan))
             {
-                Ok(needed) => materials(preview.catalog, &needed, preview.stock, draft),
+                Ok(needed) => materials(preview.catalog, &needed, &stock, draft),
                 Err(error) => view().child(text(error)),
             }
         }))
@@ -301,6 +327,38 @@ fn editor(planner: &Planner, item: &'static Item) -> View {
                 })),
         )
         .child(text(move || draft.message.get()))
+}
+
+fn stock_source(draft: Draft, imported: &Result<Option<Rc<ImportedStock>>, String>) -> View {
+    let active = draft.uses_imported.get();
+    let status = if active {
+        "库存来源：导入库存"
+    } else {
+        "库存来源：手填库存"
+    };
+    let toggle = (active || matches!(imported, Ok(Some(_)))).then(|| {
+        let label = if active {
+            "使用手填库存"
+        } else {
+            "使用导入库存"
+        };
+        button(label, move || draft.uses_imported.set(!active))
+    });
+    let detail = match imported {
+        Ok(Some(stock)) if active => Some(format!("导入库存采集时间：{}", stock.captured_at)),
+        Ok(None) => Some("当前 UID 暂无可用的背包快照".into()),
+        Err(error) => Some(format!("无法读取导入库存：{error}")),
+        Ok(Some(_)) => None,
+    };
+    view()
+        .gap_1()
+        .child(
+            button_row()
+                .items_center()
+                .child(text(status))
+                .child(toggle),
+        )
+        .child(detail.map(text))
 }
 
 impl Draft {
@@ -356,21 +414,26 @@ fn save(planner: &Planner, item: &Item, draft: Draft) {
     let result = (|| {
         let plan = draft.plan()?;
         let needed = requirements(planner.catalog, item, plan)?;
-        let stock = draft.stock_edits.with_untracked(|edits| {
-            edits
-                .iter()
-                .filter(|&(&id, _)| {
-                    needed.materials.contains_key(&id)
-                        || (needed.experience.needed > 0
-                            && draft
-                                .kind
-                                .experience_materials()
-                                .iter()
-                                .any(|&(material, _, _)| material == id))
-                })
-                .map(|(&id, value)| Ok((id, parse_quantity(value)?)))
-                .collect::<Result<MaterialCounts, String>>()
-        })?;
+        let uses_imported = draft.uses_imported.get_untracked();
+        let stock = if uses_imported {
+            MaterialCounts::new()
+        } else {
+            draft.stock_edits.with_untracked(|edits| {
+                edits
+                    .iter()
+                    .filter(|&(&id, _)| {
+                        needed.materials.contains_key(&id)
+                            || (needed.experience.needed > 0
+                                && draft
+                                    .kind
+                                    .experience_materials()
+                                    .iter()
+                                    .any(|&(material, _, _)| material == id))
+                    })
+                    .map(|(&id, value)| Ok((id, parse_quantity(value)?)))
+                    .collect::<Result<MaterialCounts, String>>()
+            })?
+        };
         store::save(
             &planner.path,
             &planner.uid,
@@ -382,8 +445,10 @@ fn save(planner: &Planner, item: &Item, draft: Draft) {
         planner.plans.update(|plans| {
             plans.insert(item.key.clone(), plan);
         });
-        planner.stock.update(|counts| counts.extend(stock));
-        draft.stock_edits.set(BTreeMap::new());
+        if !uses_imported {
+            planner.stock.update(|counts| counts.extend(stock));
+            draft.stock_edits.set(BTreeMap::new());
+        }
         Ok::<_, String>(())
     })();
     draft.message.set(match result {
@@ -416,12 +481,29 @@ fn progress_fields(key: &str, state: &str, fields: Signal<[String; 5]>, draft: D
     ))
 }
 
-fn materials(
-    catalog: &Catalog,
-    needed: &Requirements,
-    stock: Signal<MaterialCounts>,
-    draft: Draft,
-) -> View {
+#[derive(Clone)]
+enum Stock {
+    Manual(Signal<MaterialCounts>),
+    Imported(Rc<ImportedStock>),
+}
+
+impl Stock {
+    fn quantity(&self, id: i32, draft: Draft) -> Result<u32, String> {
+        match self {
+            Self::Manual(stock) => draft.quantity(id, *stock),
+            Self::Imported(stock) => Ok(stock.quantity(id)),
+        }
+    }
+
+    fn field(&self, id: i32, name: &str, draft: Draft) -> Option<Input> {
+        match self {
+            Self::Manual(stock) => Some(stock_field(id, name, *stock, draft)),
+            Self::Imported(_) => None,
+        }
+    }
+}
+
+fn materials(catalog: &Catalog, needed: &Requirements, stock: &Stock, draft: Draft) -> View {
     let rows = needed
         .materials
         .iter()
@@ -431,15 +513,19 @@ fn materials(
                 .gap_1()
                 .child(text({
                     let name = name.clone();
-                    move || match draft.quantity(id, stock) {
-                        Ok(available) => format!(
-                            "{name} · 需求 {amount} · 缺口 {}",
-                            amount.saturating_sub(available)
-                        ),
+                    let stock = stock.clone();
+                    move || match stock.quantity(id, draft) {
+                        Ok(available) => {
+                            let shortfall = amount.saturating_sub(available);
+                            match stock {
+                                Stock::Manual(_) => format!("{name} · 需求 {amount} · 缺口 {shortfall}"),
+                                Stock::Imported(_) => format!("{name} · 需求 {amount} · 导入库存 {available} · 缺口 {shortfall}"),
+                            }
+                        }
                         Err(error) => format!("{name} · {error}"),
                     }
                 }))
-                .child(stock_field(id, &name, stock, draft))
+                .child(stock.field(id, &name, draft))
                 .into_element()
         })
         .collect::<Vec<_>>();
@@ -453,7 +539,7 @@ fn materials(
         .child(button_row().children(rows))
 }
 
-fn experience_fields(experience: Experience, stock: Signal<MaterialCounts>, draft: Draft) -> View {
+fn experience_fields(experience: Experience, stock: &Stock, draft: Draft) -> View {
     let (label, unit, instruction) = match draft.kind {
         Kind::Character => (
             "经验书",
@@ -474,8 +560,9 @@ fn experience_fields(experience: Experience, stock: Signal<MaterialCounts>, draf
             draft.kind.subject(),
             experience.needed
         )))
-        .child(text(move || {
-            match experience.shortfall(materials, |id| draft.quantity(id, stock)) {
+        .child(text({
+            let stock = stock.clone();
+            move || match experience.shortfall(materials, |id| stock.quantity(id, draft)) {
                 Ok(shortfall) => format!(
                     "{label}折算 · 需求 {} · 缺口 {shortfall}",
                     experience.rounded
@@ -486,10 +573,17 @@ fn experience_fields(experience: Experience, stock: Signal<MaterialCounts>, draf
         .child(text(instruction))
         .child(
             button_row().children(materials.iter().map(|&(id, name, exp)| {
+                let imported = match stock {
+                    Stock::Manual(_) => None,
+                    Stock::Imported(stock) => {
+                        Some(text(format!("导入库存 {}", stock.quantity(id))))
+                    }
+                };
                 view()
                     .gap_1()
                     .child(text(format!("{name}（每{unit} {exp}）")))
-                    .child(stock_field(id, name, stock, draft))
+                    .child(stock.field(id, name, draft))
+                    .child(imported)
                     .into_element()
             })),
         )

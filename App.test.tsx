@@ -6,6 +6,92 @@ import { platform } from "process";
 
 const windowsTest = platform === "windows" ? test : test.skip;
 
+windowsTest("uses the selected UID's imported stock for character growth", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450231");
+  await app.press("创建 UID 数据空间");
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/inventory-good-growth.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450231");
+  await app.press("备份并确认完整导入");
+  await app.press("背包仓库");
+  await app.press("角色养成计划");
+  await app.type("growth-search", "安柏");
+  await app.press("规划安柏");
+  await app.clear("growth-target-level");
+  await app.type("growth-target-level", "21");
+  await app.clear("growth-target-phase");
+  await app.type("growth-target-phase", "1");
+  await app.type("growth-stock-100055", "2");
+  await app.waitFor("小灯草 · 需求 3 · 缺口 1");
+
+  await app.press("使用导入库存");
+  await app.waitFor("导入库存采集时间：2026-10-11T08:00:00+08:00");
+  expect(app.texts()).toContain("小灯草 · 需求 3 · 导入库存 9 · 缺口 0");
+  expect(app.texts()).toContain("牢固的箭簇 · 需求 3 · 导入库存 0 · 缺口 3");
+  expect(app.texts()).toContain("经验书折算 · 需求 136000 · 缺口 0");
+  await app.press("保存养成计划");
+  await app.waitFor("已保存安柏的养成计划");
+  await app.press("使用手填库存");
+  await app.waitFor("小灯草 · 需求 3 · 缺口 1");
+  await app.press("关闭计划编辑");
+  await app.press("查看安柏的计划（等级 1 → 21）");
+  await app.waitFor("小灯草 · 需求 3 · 缺口 3");
+  await app.press("使用导入库存");
+
+  await app.type("game-uid", "123450232");
+  await app.press("创建 UID 数据空间");
+  await app.press("规划安柏");
+  await app.waitFor("当前 UID 暂无可用的背包快照");
+  expect(app.texts()).not.toContain("使用导入库存");
+  expect(app.texts()).not.toContain("导入库存采集时间：2026-10-11T08:00:00+08:00");
+}, 60000);
+
+windowsTest("uses the latest complete imported stock for weapon growth", async () => {
+  const app = await open(".", { width: 1024, height: 1000 });
+  await app.press("角色资料");
+  await app.type("game-uid", "123450233");
+  await app.press("创建 UID 数据空间");
+  await app.press("武器养成计划");
+  await app.type("weapon-growth-search", "13301");
+  await app.press("规划白缨枪");
+  await app.clear("weapon-growth-target-level");
+  await app.type("weapon-growth-target-level", "21");
+  await app.clear("weapon-growth-target-phase");
+  await app.type("weapon-growth-target-phase", "1");
+
+  await app.press("背包仓库");
+  await app.type("inventory-file", "tests/data/inventory-good-newer.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450233");
+  await app.press("备份并确认完整导入");
+  await app.press("使用导入库存");
+  await app.waitFor("导入库存采集时间：2026-10-10T07:50:00+08:00");
+  expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 0 · 缺口 2");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/inventory-good-growth.json");
+  await app.press("读取 GOOD 文件");
+  await app.press("预览背包导入至 UID 123450233");
+  await app.press("备份并确认完整导入");
+  await app.waitFor("导入库存采集时间：2026-10-11T08:00:00+08:00");
+  expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 1 · 缺口 1");
+  expect(app.texts()).toContain("摩拉 · 需求 11080 · 导入库存 30000 · 缺口 0");
+  expect(app.texts()).toContain("强化矿折算 · 需求 60800 · 缺口 0");
+
+  await app.clear("inventory-file");
+  await app.type("inventory-file", "tests/data/genshinData_GOOD_2026_10_09_08_00.json");
+  await app.press("读取 GOOD 文件");
+  await app.type("inventory-captured-at", "+08:00");
+  await app.press("预览背包导入至 UID 123450233");
+  await app.waitFor("这份快照较旧，导入后可在历史中主动选择。");
+  await app.press("备份并确认完整导入");
+  expect(app.texts()).toContain("导入库存采集时间：2026-10-11T08:00:00+08:00");
+  expect(app.texts()).toContain("孤云寒林的光砂 · 需求 2 · 导入库存 1 · 缺口 1");
+}, 60000);
+
 windowsTest("saves weapon growth and shares manual stock within the selected UID", async () => {
   const app = await open(".", { width: 1024, height: 1000 });
   await app.press("角色资料");

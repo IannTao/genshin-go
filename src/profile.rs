@@ -62,6 +62,7 @@ pub(crate) fn spaces(
                 path.clone(),
                 profile,
                 deletion_revision,
+                history_revision,
             ))
             .child(crate::backup::section(
                 path.clone(),

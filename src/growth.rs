@@ -3,10 +3,15 @@ mod store;
 mod ui;
 mod weapon;
 
-use crate::profile::Profile;
+use crate::{inventory, profile::Profile};
 use nsh_core::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, ops::RangeInclusive, path::PathBuf, sync::OnceLock};
+use std::{
+    collections::BTreeMap,
+    ops::RangeInclusive,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 /// Creates UID-owned growth plans and manually entered material quantities.
 pub(crate) const SCHEMA: &str = store::SCHEMA;
@@ -18,9 +23,10 @@ pub(crate) const WEAPON_SCHEMA: &str = store::WEAPON_SCHEMA;
 pub(crate) fn section(
     path: Result<PathBuf, String>,
     profile: Signal<Profile>,
-    revision: Signal<u64>,
+    plan_revision: Signal<u64>,
+    inventory_revision: Signal<u64>,
 ) -> View {
-    ui::section(path, profile, revision)
+    ui::section(path, profile, plan_revision, inventory_revision)
 }
 
 const LEVEL_CAPS: [u8; 7] = [20, 40, 50, 60, 70, 80, 90];
@@ -36,6 +42,40 @@ const EXP_BOOKS: [(i32, &str, u32); 3] = [
 type MaterialCounts = BTreeMap<i32, u32>;
 type Cost = Vec<(i32, u32)>;
 type ExperienceMaterial = (i32, &'static str, u32);
+
+#[derive(PartialEq, Eq)]
+struct ImportedStock {
+    captured_at: String,
+    counts: MaterialCounts,
+}
+
+impl ImportedStock {
+    fn load(path: &Path, uid: &str) -> Result<Option<Self>, String> {
+        static KEYS: OnceLock<Result<BTreeMap<i32, String>, serde_json::Error>> = OnceLock::new();
+
+        let Some(snapshot) = inventory::latest_materials(path, uid)? else {
+            return Ok(None);
+        };
+        let keys = KEYS
+            .get_or_init(|| {
+                serde_json::from_str(include_str!("../assets/growth-material-good-keys.json"))
+            })
+            .as_ref()
+            .map_err(|error| format!("无法读取 GOOD 材料目录：{error}"))?;
+        let counts = keys
+            .iter()
+            .filter_map(|(&id, key)| snapshot.quantities.get(key).map(|&count| (id, count)))
+            .collect();
+        Ok(Some(Self {
+            captured_at: snapshot.captured_at,
+            counts,
+        }))
+    }
+
+    fn quantity(&self, id: i32) -> u32 {
+        self.counts.get(&id).copied().unwrap_or_default()
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {

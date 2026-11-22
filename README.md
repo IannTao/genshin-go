@@ -144,6 +144,18 @@ curves use the [per-level game data](https://gitlab.com/GuraFoundation/YuanShenR
 The Exaiphanes Blade's level milestones use its
 [enhancement table](https://gitlab.com/GuraFoundation/YuanShenResources/-/blob/6044f5aae7dd79fbbe15c5748ef99b654f6132b7/ExcelBinOutput/WeaponQuestSnezhnayaEnhanceExcelConfigData.json).
 
+## Windows inventory stock for growth plans
+
+In either growth planner, choose **使用导入库存** to calculate shortfalls from
+the selected UID's latest complete GOOD snapshot. The editor shows the original
+collection time and imported quantities. A missing material has zero stock.
+Choose **使用手填库存** to return to your manual quantities. Each editor opens
+in manual mode, and **保存养成计划** saves manual stock edits while using manual
+mode. Imported quantities are read-only.
+
+The offline material lookup matches game IDs to GOOD keys from the
+[Genshin Optimizer material ID map](https://github.com/frzyc/genshin-optimizer/blob/f24bcb82f650ff755af9ed47956a91809f142772/libs/gi/dm/src/dm/material/MaterialExcelConfigData_idmap_gen.json).
+
 ## Windows account authorization
 
 The launcher uses the [UIGF Rust SDK](https://github.com/UIGF-org/mihoyo-api-sdk) for Passport App QR login and session verification. After confirmation it exchanges the SToken for account cookies and checks that the account has a unique official mainland-China Genshin UID before storing the authorization.

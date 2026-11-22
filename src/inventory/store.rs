@@ -1,10 +1,16 @@
-use super::archive::{Archive, CaptureTime, Inventory};
+use super::{
+    MaterialSnapshot,
+    archive::{Archive, CaptureTime, Inventory},
+};
 use crate::{
     account_store::{database_error, open},
     native_environment::atomic_write,
 };
-use rusqlite::{Connection, TransactionBehavior, params};
-use std::path::{Path, PathBuf};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 /// Creates inventory history and a single catalog of GOOD material keys.
 pub(super) const SCHEMA: &str = "
@@ -90,6 +96,29 @@ pub(super) fn read(path: &Path, uid: &str, id: i64) -> Result<Inventory, String>
     inventory(&read, uid, id)
 }
 
+/// Reads the latest snapshot's material quantities and collection time in one transaction.
+pub(super) fn latest_materials(path: &Path, uid: &str) -> Result<Option<MaterialSnapshot>, String> {
+    let mut db = open(path)?;
+    let read = db.transaction().map_err(|error| database_error(&error))?;
+    let snapshot = read
+        .query_row(
+            "SELECT id, captured_at FROM inventory_snapshots
+             WHERE uid = ?1 ORDER BY captured_nanos DESC LIMIT 1",
+            [uid],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| database_error(&error))?;
+    snapshot
+        .map(|(id, captured_at)| {
+            Ok(MaterialSnapshot {
+                captured_at,
+                quantities: materials(&read, id)?,
+            })
+        })
+        .transpose()
+}
+
 fn inventory(db: &Connection, uid: &str, id: i64) -> Result<Inventory, String> {
     let (weapons, artifacts) = db
         .query_row(
@@ -98,19 +127,22 @@ fn inventory(db: &Connection, uid: &str, id: i64) -> Result<Inventory, String> {
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .map_err(|error| database_error(&error))?;
-    let mut query = db
-        .prepare("SELECT good_key, quantity FROM inventory_materials WHERE snapshot_id = ?1")
-        .map_err(|error| database_error(&error))?;
-    let materials = query
-        .query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .and_then(Iterator::collect)
-        .map_err(|error| database_error(&error))?;
     let decode_error = |error| format!("无法读取已保存的背包记录：{error}");
     Ok(Inventory {
         weapons: serde_json::from_str(&weapons).map_err(decode_error)?,
         artifacts: serde_json::from_str(&artifacts).map_err(decode_error)?,
-        materials,
+        materials: materials(db, id)?,
     })
+}
+
+fn materials(db: &Connection, id: i64) -> Result<BTreeMap<String, u32>, String> {
+    let mut query = db
+        .prepare("SELECT good_key, quantity FROM inventory_materials WHERE snapshot_id = ?1")
+        .map_err(|error| database_error(&error))?;
+    query
+        .query_map([id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .and_then(Iterator::collect)
+        .map_err(|error| database_error(&error))
 }
 
 /// Reads the current inventory and determines how the incoming snapshot would be stored.
