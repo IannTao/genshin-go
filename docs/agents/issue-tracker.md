@@ -4,6 +4,9 @@
 使用 gh CLI；命令显式指定 --repo IannTao/genshin-go，
 不依赖当前目录的 Git remote。
 
+- 读取 Issue 时使用 `--json number,title,state,url,labels,body,comments`，避免 Windows 非 TTY 下 `gh issue view` 返回空输出。
+- 推送分支时若 SSH 22 端口受限，改用 `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push https://github.com/IannTao/genshin-go.git <branch>`。
+- 多 Issue 并行开发时，每个 Issue 在独立 `git worktree` 中修改与验证，合并后及时清理失效 worktree（`git worktree prune`）。
 - 发布规格或任务：创建 GitHub issue。
 - 创建前检查已有 issue，避免重复发布。
 - 多行正文写入 UTF-8 文件，通过 --body-file 提交。

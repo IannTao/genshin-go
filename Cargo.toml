@@ -73,6 +73,8 @@ missing_errors_doc = "allow"                 # 覆盖 pedantic 中的个别噪�
 missing_panics_doc = "allow"
 
 # Restriction 组手动挑选，严禁整组开启
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
 unwrap_used = "deny"
 expect_used = "warn"
 dbg_macro = "warn"

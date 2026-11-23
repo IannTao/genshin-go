@@ -1,4 +1,4 @@
-#requires -Version 7.2
+﻿#requires -Version 7.2
 $ErrorActionPreference = 'Stop'
 
 $tempRoot = [IO.Path]::TrimEndingDirectorySeparator((Get-Item -LiteralPath ([IO.Path]::GetTempPath())).FullName)
@@ -13,6 +13,9 @@ try {
     Write-Host 'Rust Clippy 检查'
     cargo clippy --locked --workspace --all-targets -- -D warnings
     if ($LASTEXITCODE -ne 0) { throw "cargo clippy --locked --workspace --all-targets -- -D warnings 失败（退出码 $LASTEXITCODE）" }
+    Write-Host 'Rust 单元测试'
+    cargo test --locked --lib
+    if ($LASTEXITCODE -ne 0) { throw "cargo test --locked --lib 失败（退出码 $LASTEXITCODE）" }
     Write-Host 'Issue 同步脚本离线测试'
     ./docs/specs/test-launcher-ticket-sync.ps1
 

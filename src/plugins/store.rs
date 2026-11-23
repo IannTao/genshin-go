@@ -737,6 +737,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires local FufuLauncher install"]
     fn real_local_fufu_source_installs_and_uninstalls_cleanly() -> Result<(), String> {
         let source = Path::new(r"C:\softwares\FufuLauncher\Plugins\FuFuPlugin");
         if !source.is_dir() {
